@@ -1,0 +1,10 @@
+# environment.yml
+name: nces-benchmark
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip>=24.0
+  - openjdk=17
+  - pip:
+      - -r requirements.txt

@@ -1,0 +1,23 @@
+# Local environments and VCS metadata
+.conda/
+.venv/
+venv/
+.git/
+
+# Python cache and tooling output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Generated benchmark artifacts
+Output/
+**/embeddings/
+**/metrics/
+**/results/
+**/runtime/
+**/trained_models/
+**/training_data/
+
+# Keep Docker build inputs explicit and small
+*.ipynb

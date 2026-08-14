@@ -1,0 +1,17 @@
+[project]
+name = "nces-benchmark"
+version = "0.1.0"
+description = "Ontology learning benchmark for NCES and embedding-based concept synthesis"
+requires-python = ">=3.11"
+
+[project.scripts]
+nces-benchmark = "src.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]

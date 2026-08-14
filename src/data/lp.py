@@ -1,0 +1,256 @@
+# src/data/lp.py
+"""Learning-problem generation and the canonical learning-problem schema.
+
+A learning problem satisfies the benchmark constraint: for target concept
+``T``, positive examples ``E+`` and negative examples ``E-``, the learner must
+find a concept expression ``C`` such that in ``K' = K ∪ {T ≡ C}`` every
+``e+ ∈ E+`` is entailed as ``C(e+)`` and no ``e- ∈ E-`` is.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import random
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Iterable, Sequence
+
+from src.config import DataGenerationSettings
+from src.data.ontology import local_name
+
+logger = logging.getLogger(__name__)
+
+#: Key used by ontolearn's ``LPs.json`` for positive examples.
+_POS_KEY = "positive examples"
+#: Key used by ontolearn's ``LPs.json`` for negative examples.
+_NEG_KEY = "negative examples"
+
+
+@dataclass(frozen=True)
+class LearningProblem:
+    """One learning problem in the canonical project schema."""
+
+    id: str
+    target_concept: str
+    pos_example: list[str]
+    neg_example: list[str]
+    complexity: int
+    num_pos: int = field(default=0)
+    num_neg: int = field(default=0)
+
+    def __post_init__(self) -> None:
+        if not self.pos_example:
+            raise ValueError(f"Learning problem {self.id} has no positive examples.")
+        if not self.neg_example:
+            raise ValueError(f"Learning problem {self.id} has no negative examples.")
+        object.__setattr__(self, "num_pos", len(self.pos_example))
+        object.__setattr__(self, "num_neg", len(self.neg_example))
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def as_nces_datapoint(self) -> tuple[str, dict[str, list[str]]]:
+        """Convert to the ``(name, examples)`` tuple that ``NCES`` consumes.
+
+        NCES indexes its embedding matrix by local name, so IRIs are reduced
+        here rather than inside the learner.
+        """
+        return (
+            self.target_concept,
+            {
+                _POS_KEY: [local_name(iri) for iri in self.pos_example],
+                _NEG_KEY: [local_name(iri) for iri in self.neg_example],
+            },
+        )
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "LearningProblem":
+        return cls(
+            id=str(payload["id"]),
+            target_concept=str(payload["target_concept"]),
+            pos_example=list(payload["pos_example"]),
+            neg_example=list(payload["neg_example"]),
+            complexity=int(payload.get("complexity", 0)),
+        )
+
+
+def _concept_complexity(dl_expression: str) -> int:
+    """Approximate DL-expression length from its rendered form.
+
+    Atomic concepts score 1; each constructor token adds 1. This mirrors
+    ``ontolearn.utils.concept_len`` closely enough for bucketing without
+    re-parsing the expression.
+    """
+    tokens = dl_expression.replace("(", " ").replace(")", " ").split()
+    constructors = sum(
+        1 for token in tokens if token in {"⊓", "⊔", "¬", "∃", "∀", "≤", "≥"}
+    )
+    atoms = sum(
+        1
+        for token in tokens
+        if token not in {"⊓", "⊔", "¬", "∃", "∀", "≤", "≥", "."}
+    )
+    return max(1, atoms + constructors)
+
+
+def generate_learning_problems(
+    kb_path: Path,
+    storage_path: Path,
+    settings: DataGenerationSettings,
+    *,
+    seed: int,
+) -> list[LearningProblem]:
+    """Generate learning problems for one knowledge base.
+
+    Wraps ``ontolearn.lp_generator.LPGen``, which writes ``LPs.json`` into
+    ``storage_path``. The generated file is then normalised into the canonical
+    project schema, with positive/negative examples expanded back to full IRIs.
+    """
+    from ontolearn.lp_generator import LPGen
+
+    random.seed(seed)
+    storage_path.mkdir(parents=True, exist_ok=True)
+
+    kwargs = settings.lpgen_kwargs(kb_path, storage_path)
+    logger.info(
+        "Generating up to %d learning problems for %s",
+        kwargs["max_num_lps"],
+        kb_path.name,
+    )
+    LPGen(**kwargs).generate()
+
+    raw_path = storage_path / "LPs.json"
+    if not raw_path.is_file():
+        raise RuntimeError(f"LPGen did not produce {raw_path}.")
+
+    with raw_path.open(encoding="utf-8") as handle:
+        raw = json.load(handle)
+
+    namespace = _infer_namespace(kb_path)
+    problems = _normalise(raw, namespace=namespace)
+    logger.info("Normalised %d learning problems", len(problems))
+    return problems
+
+
+def _infer_namespace(kb_path: Path) -> str:
+    """Read the ontology's default namespace so local names can be expanded."""
+    from rdflib import Graph, URIRef
+
+    graph = Graph()
+    graph.parse(str(kb_path))
+    for subject in graph.subjects():
+        if isinstance(subject, URIRef):
+            iri = str(subject)
+            for separator in ("#", "/"):
+                if separator in iri:
+                    return iri.rsplit(separator, 1)[0] + separator
+    return ""
+
+
+def _normalise(
+    raw: Iterable[Any], *, namespace: str
+) -> list[LearningProblem]:
+    """Convert ontolearn's ``LPs.json`` payload into learning problems."""
+    entries: list[tuple[str, dict[str, Any]]]
+    if isinstance(raw, dict):
+        entries = list(raw.items())
+    else:
+        entries = [(item[0], item[1]) for item in raw]
+
+    problems: list[LearningProblem] = []
+    for index, (target_concept, examples) in enumerate(entries):
+        positives = _expand(examples.get(_POS_KEY, []), namespace)
+        negatives = _expand(examples.get(_NEG_KEY, []), namespace)
+        if not positives or not negatives:
+            logger.debug("Skipping degenerate problem %r", target_concept)
+            continue
+        problems.append(
+            LearningProblem(
+                id=f"lp_{index:04d}",
+                target_concept=target_concept,
+                pos_example=sorted(positives),
+                neg_example=sorted(negatives),
+                complexity=_concept_complexity(target_concept),
+            )
+        )
+    return problems
+
+
+def _expand(names: Sequence[str], namespace: str) -> list[str]:
+    """Expand local names back into full IRIs where possible."""
+    expanded = []
+    for name in names:
+        if name.startswith("http://") or name.startswith("https://"):
+            expanded.append(name)
+        else:
+            expanded.append(f"{namespace}{name}" if namespace else name)
+    return expanded
+
+
+def save_learning_problems(
+    problems: Sequence[LearningProblem], path: Path
+) -> None:
+    """Serialize learning problems grouped by complexity level."""
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for problem in problems:
+        grouped.setdefault(str(problem.complexity), []).append(problem.to_dict())
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(grouped, handle, indent=2, ensure_ascii=False)
+    logger.info("Wrote %d learning problems to %s", len(problems), path)
+
+
+def load_learning_problems(path: Path) -> list[LearningProblem]:
+    """Load learning problems from the grouped JSON artifact."""
+    with path.open(encoding="utf-8") as handle:
+        grouped = json.load(handle)
+    return [
+        LearningProblem.from_dict(payload)
+        for problems in grouped.values()
+        for payload in problems
+    ]
+
+
+def split_learning_problems(
+    problems: Sequence[LearningProblem],
+    *,
+    seed: int,
+    ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
+) -> dict[str, list[LearningProblem]]:
+    """Split learning problems into disjoint train/validation/test sets.
+
+    NCES must never be evaluated on a learning problem it trained on, so the
+    split is applied to the problems themselves rather than to the examples.
+    """
+    if not problems:
+        return {"train": [], "validation": [], "test": []}
+
+    shuffled = list(problems)
+    random.Random(seed).shuffle(shuffled)
+
+    total = len(shuffled)
+    n_train = max(1, int(total * ratios[0]))
+    n_validation = int(total * ratios[1])
+    if n_train + n_validation >= total:
+        n_validation = max(0, total - n_train - 1)
+
+    return {
+        "train": shuffled[:n_train],
+        "validation": shuffled[n_train : n_train + n_validation],
+        "test": shuffled[n_train + n_validation :] or shuffled[-1:],
+    }
+
+
+def save_split(
+    split: dict[str, list[LearningProblem]], directory: Path
+) -> None:
+    """Persist each learning-problem split to its own artifact."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, problems in split.items():
+        payload = [problem.to_dict() for problem in problems]
+        with (directory / f"{name}_problems.json").open(
+            "w", encoding="utf-8"
+        ) as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=False)

@@ -1,0 +1,42 @@
+nces-benchmark/
+├── Dockerfile
+├── docker-compose.yml
+├── environment.yml
+├── requirements.txt
+├── pyproject.toml
+├── README.md
+├── .dockerignore
+├── datasets/
+│   └── .gitkeep
+├── input/
+│   ├── data_generation_settings.json
+│   ├── embedding_settings.json
+│   ├── nces_settings.json
+│   └── project_settings.json
+├── src/
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── config.py
+│   ├── paths.py
+│   ├── logging_utils.py
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── ontology.py
+│   │   └── lp.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── dicee.py
+│   │   └── nces.py
+│   └── benchmarking/
+│       ├── __init__.py
+│       ├── metrics.py
+│       └── runner.py
+└── tests/
+    ├── __init__.py
+    ├── conftest.py
+    ├── test_config.py
+    ├── test_ontology.py
+    ├── test_lp.py
+    ├── test_dicee.py
+    ├── test_nces.py
+    └── test_runner.py
