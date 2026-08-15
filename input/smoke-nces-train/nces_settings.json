@@ -1,0 +1,16 @@
+{
+  "learner_name": "GRU",
+  "embedding_dim": 64,
+  "epochs": 300,
+  "batch_size": 32,
+  "proj_dim": 40,
+  "rnn_n_layers": 1,
+  "drop_prob": 0.0,
+  "num_heads": 2,
+  "num_seeds": 1,
+  "num_workers": 0,
+  "max_length": 48,
+  "num_predictions": 64,
+  "learning_rate": 0.0001,
+  "sorted_examples": true
+}

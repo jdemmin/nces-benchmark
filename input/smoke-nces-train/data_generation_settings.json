@@ -1,0 +1,9 @@
+{
+  "kbs": "semantic_bible",
+  "num_rand_samples": 150,
+  "depth": 2,
+  "max_child_len": 10,
+  "refinement_expressivity": 0.2,
+  "rho": "ALC",
+  "min_num_pos_examples": 1
+}
