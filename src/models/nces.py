@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from owlapy import owl_expression_to_dl
+
 from src.benchmarking.metrics import aggregate_by_complexity, calculate_metrics
 from src.config import NCESSettings
 from src.data.lp import LearningProblem
@@ -201,6 +203,7 @@ def evaluate_nces(
     from ontolearn.learning_problem import PosNegLPStandard
     from owlapy.owl_individual import OWLNamedIndividual
     from owlapy.render import DLSyntaxObjectRenderer
+    from owlapy.class_expression import OWLClassExpression
 
     if not problems:
         return {"split": split_name, "results": [], "complexity_summary": {}}
@@ -223,7 +226,12 @@ def evaluate_nces(
         started = time.perf_counter()
         try:
             predictions = model.fit(lp)
-            hypotheses = list(model.best_hypotheses(n=1) or [])
+            # returns Union type. We expect a single OWLClassExpression, so we check the type and raise if not.
+            hypothesis = model.best_hypotheses()
+            if not isinstance(hypothesis, OWLClassExpression):
+                raise TypeError(
+                    f"Expected a single OWLClassExpression, got {type(hypothesis)}"
+                )
         except Exception as error:  # noqa: BLE001 - a single LP may fail
             logger.warning(
                 "NCES failed on %s (%s): %s: %s",
@@ -245,7 +253,6 @@ def evaluate_nces(
             continue
         del predictions
 
-        hypothesis = hypotheses[0] if hypotheses else None
         expression = getattr(hypothesis, "concept", hypothesis)
         hypothesis_dl = renderer.render(expression) if expression else ""
 
