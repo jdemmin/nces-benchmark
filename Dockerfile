@@ -8,6 +8,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TOKENIZERS_PARALLELISM=false \
     CONDA_ENV=nces-benchmark
 
+# Set (force) the library path to include the conda environment's lib directory, which is necessary for some libraries to function correctly.
+ENV LD_LIBRARY_PATH=/opt/conda/envs/nces-benchmark/lib:$LD_LIBRARY_PATH
+
 # Java is required by owlapy's OWLAPI synchronisation layer (HermiT/Pellet).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
@@ -39,5 +42,5 @@ COPY datasets/ ./datasets/
 
 RUN mkdir -p /app/Output
 
-ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "nces-benchmark", "python", ".src/__main__.py"]
+ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "nces-benchmark", "nces-benchmark"]
 CMD ["--help"]
