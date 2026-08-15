@@ -86,7 +86,7 @@ def iter_atomic_concepts(knowledge_base) -> Iterator[str]:
     from owlapy.render import DLSyntaxObjectRenderer
 
     renderer = DLSyntaxObjectRenderer()
-    for owl_class in knowledge_base.ontology.classes_in_signature():
+    for owl_class in knowledge_base.ontology().classes_in_signature():
         yield renderer.render(owl_class)
 
 
