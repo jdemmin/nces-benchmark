@@ -1,4 +1,4 @@
-# src/models/dicee.py
+# src/models/dice.py
 """DICE dataset preparation, embedding training, search, and export."""
 
 from __future__ import annotations
@@ -236,23 +236,46 @@ def _best_trial_run_dir(
 
 
 def export_entity_embeddings(
-    run_dir: Path, output_path: Path, *, use_local_names: bool = True
+    run_dir: Path,
+    output_path: Path,
+    *,
+    use_local_names: bool = True,
+    expected_dim: int | None = None,
 ) -> Path:
     """Export DICE entity embeddings to the CSV schema NCES expects.
 
     NCES reads a CSV whose index is the entity name and whose columns are the
     embedding dimensions. Entity IRIs are reduced to local names because NCES
     looks individuals up by local name (see ``src/data/ontology.local_name``).
+
+    Embeddings are read through ``dicee.KGE`` rather than by globbing for
+    ``*entity_embeddings.csv``: that file is only written when
+    ``save_embeddings_as_csv`` is set, which is not the default.
     """
     import pandas as pd
+    from dicee import KGE
 
-    candidates = sorted(run_dir.glob("**/*entity_embeddings.csv"))
-    if not candidates:
-        raise FileNotFoundError(
-            f"No entity embedding CSV found under {run_dir}."
+    model = KGE(path=str(run_dir))
+
+    names, positions = _entity_index_mapping(model)
+    matrix = _entity_embedding_matrix(model)[positions]
+
+    #TODO saved for later
+    if expected_dim is not None and matrix.shape[1] != expected_dim:
+        raise ValueError(
+            f"DICE exported {matrix.shape[1]}-dimensional entity embeddings "
+            f"but NCES expects {expected_dim}. Multi-component models "
+            f"(Keci, ComplEx, QMult, OMult, DualE) widen the stored matrix; "
+            f"set embedding.embedding_dim so the exported width matches "
+            f"nces.embedding_dim."
         )
 
-    frame = pd.read_csv(candidates[0], index_col=0)
+    frame = pd.DataFrame(
+        matrix,
+        index=[str(name) for name in names],
+        columns=[str(i) for i in range(matrix.shape[1])],
+    )
+
     if use_local_names:
         frame.index = [local_name(str(name)) for name in frame.index]
         # Duplicate local names would make the entity index mapping ambiguous.
@@ -332,8 +355,9 @@ def build_embeddings(
         )
         chosen = best
         run_dir = _best_trial_run_dir(trials, best)
+        #TODO this seems not to happen. Why?
         output_path = embeddings_dir / f"{best.model_name}.csv"
-        export_entity_embeddings(run_dir, output_path)
+        export_entity_embeddings(run_dir, output_path, expected_dim=None)
         score, _ = _selection_score(report)
         results["dice"] = EmbeddingResult(
             model_name=best.model_name,
@@ -353,10 +377,17 @@ def build_embeddings(
 
     if "random" in conditions:
         output_path = embeddings_dir / f"{chosen.model_name}_random.csv"
+        # Match the exported DICE width, not the configured dimension: some
+        # models store several components per dimension.
+        baseline_dim = (
+            results["dice"].embedding_dim
+            if "dice" in results
+            else chosen.embedding_dim
+        )
         generate_random_embeddings(
             entity_names,
             output_path,
-            embedding_dim=chosen.embedding_dim,
+            embedding_dim=baseline_dim,
             seed=seed,
         )
         results["random"] = EmbeddingResult(
@@ -381,3 +412,36 @@ def build_embeddings(
             indent=2,
         )
     return results
+
+def _entity_embedding_matrix(model: Any) -> np.ndarray:
+    """Return the dense entity-embedding matrix from a loaded ``KGE``.
+
+    ``KGE.model`` is a union of every DICE architecture, so the attribute
+    holding the embedding table is not uniform: most models expose
+    ``entity_embeddings``, but ``Shallom`` and the convolutional models do
+    not. Probe the known names and fail loudly rather than assuming.
+    """
+    import torch
+
+    inner = model.model
+    for attribute in ("entity_embeddings", "emb_ent_real", "entity_embedding"):
+        table = getattr(inner, attribute, None)
+        if isinstance(table, torch.nn.Embedding):
+            return table.weight.detach().cpu().numpy()
+
+    raise AttributeError(
+        f"Could not locate the entity-embedding table on "
+        f"{type(inner).__name__}. Supported attribute names: "
+        f"entity_embeddings, emb_ent_real, entity_embedding."
+    )
+
+
+def _entity_index_mapping(model: Any) -> tuple[list[str], list[int]]:
+    """Return ``(entity_names, row_positions)`` for a loaded ``KGE``."""
+    import pandas as pd
+
+    mapping = model.entity_to_idx
+    if isinstance(mapping, pd.DataFrame):
+        # Older dicee stores the mapping as a frame with an "index" column.
+        return [str(n) for n in mapping.index], mapping.iloc[:, 0].tolist()
+    return [str(k) for k in mapping], list(mapping.values())

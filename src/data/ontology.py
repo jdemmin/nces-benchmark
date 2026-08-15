@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ def concept_extension(knowledge_base, dl_expression: str) -> frozenset[str]:
     from owlapy.parser import DLSyntaxParser
 
     namespace = _guess_namespace(knowledge_base)
-    parser = DLSyntaxParser(namespace_or_prefix_map=namespace)
+    parser = DLSyntaxParser(namespace=namespace)
     try:
         expression = parser.parse_expression(dl_expression)
     except Exception:  # noqa: BLE001 - upstream raises bare exceptions
