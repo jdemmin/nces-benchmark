@@ -12,9 +12,12 @@ from __future__ import annotations
 import json
 import logging
 import random
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
+
+from owlapy.owl_individual import OWLNamedIndividual
 
 from src.config import DataGenerationSettings
 from src.data.ontology import local_name
@@ -33,6 +36,7 @@ class LearningProblem:
 
     id: str
     target_concept: str
+
     pos_example: list[str]
     neg_example: list[str]
     complexity: int
@@ -65,7 +69,7 @@ class LearningProblem:
         )
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "LearningProblem":
+    def from_dict(cls, payload: dict[str, Any]) -> LearningProblem:
         return cls(
             id=str(payload["id"]),
             target_concept=str(payload["target_concept"]),
@@ -254,3 +258,11 @@ def save_split(
             "w", encoding="utf-8"
         ) as handle:
             json.dump(payload, handle, indent=2, ensure_ascii=False)
+
+def getOWLNamedIndividual(iri: str) -> OWLNamedIndividual:
+    """Create an OWL named individual from an IRI."""
+    return OWLNamedIndividual(iri)
+    
+def getOWLNamedIndividuals(iris: Iterable[str]) -> set[OWLNamedIndividual]:
+    """Create a set of OWL named individuals from a list of IRIs."""
+    return {OWLNamedIndividual(iri) for iri in iris}

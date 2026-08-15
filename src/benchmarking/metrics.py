@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import asdict, dataclass
-from typing import Any, Collection
+from typing import Any
 
 
 @dataclass(frozen=True)

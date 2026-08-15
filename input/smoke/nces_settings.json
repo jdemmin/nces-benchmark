@@ -1,1 +1,12 @@
-{"learner_name": "GRU", "embedding_dim": 16, "epochs": 5, "batch_size": 4, "proj_dim": 20, "rnn_n_layers": 1, "drop_prob": 0.0, "num_heads": 2, "num_seeds": 1, "num_workers": 0}
+{
+    "learner_name": "GRU", 
+    "embedding_dim": 16, 
+    "epochs": 300, 
+    "batch_size": 4, 
+    "proj_dim": 20, 
+    "rnn_n_layers": 1, 
+    "drop_prob": 0.0, 
+    "num_heads": 2,
+    "num_seeds": 1,
+    "num_workers": 0
+}

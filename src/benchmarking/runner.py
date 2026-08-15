@@ -80,6 +80,7 @@ def run_single(
         train_data = prepare_nces_training_data(
             split["train"], paths.nces_data_dir / "nces_train_data.json"
         )
+        logger.info("Prepared NCES training data with %d problems", len(train_data))
 
         conditions: dict[str, Any] = {}
         for condition, embedding in embeddings.items():

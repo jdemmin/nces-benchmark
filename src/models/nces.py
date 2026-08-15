@@ -12,25 +12,36 @@ from typing import Any
 
 from src.benchmarking.metrics import aggregate_by_complexity, calculate_metrics
 from src.config import NCESSettings
-from src.data.lp import LearningProblem
+from src.data.lp import LearningProblem, getOWLNamedIndividuals
 from src.data.ontology import concept_extension, local_name
 
 logger = logging.getLogger(__name__)
 
 
 def prepare_nces_training_data(
-    problems: Sequence[LearningProblem], path: Path
-) -> list[tuple[str, dict[str, list[str]]]]:
+     problems: Sequence[LearningProblem], path: Path
+ ) -> list[tuple[str, dict[str, list[str]]]]:
     """Build and persist the NCES training data.
 
     NCES expects a sequence of ``(target_concept, {"positive examples": [...],
     "negative examples": [...]})`` tuples keyed on **local names**.
     """
     data = [problem.as_nces_datapoint() for problem in problems]
+    if len(dict(data)) != len(data):
+        logger.warning(
+            "%d of %d learning problems share a target concept; "
+            "the persisted artifact is keyed by concept and will collapse them",
+            len(data) - len(dict(data)),
+            len(data),
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
-        json.dump(dict(data), handle, indent=2, ensure_ascii=False)
-    logger.info("Prepared %d NCES training data points at %s", len(data), path)
+        json.dump(
+            [{"target_concept": c, **ex} for c, ex in data],
+            handle,
+            indent=2,
+            ensure_ascii=False,
+        )
     return data
 
 
@@ -47,11 +58,12 @@ def build_nces(
     ``auto_train`` is disabled so that training is always explicit and driven
     by the benchmark's own train split.
     """
-    from ontolearn.concept_learner import NCES
+    from ontolearn.knowledge_base import KnowledgeBase
+    from ontolearn.learners import NCES
 
     trained_models_dir.mkdir(parents=True, exist_ok=True)
     return NCES(
-        knowledge_base_path=str(kb_path),
+        knowledge_base=KnowledgeBase(path=str(kb_path)),
         path_of_embeddings=str(embeddings_path),
         path_of_trained_models=str(trained_models_dir),
         learner_names=settings.learner_names,
@@ -80,9 +92,14 @@ def train_nces(
 ) -> dict[str, Any]:
     """Train NCES on the train split and save the weights.
 
-    Returns the training summary, including runtime. NCES writes its own
-    weights into ``trained_models_dir``; evaluation later reloads them with
-    ``load_pretrained=True``.
+    Upstream ``NCESTrainer.train`` initializes ``best_weights = (None, None)``
+    and only replaces it when an epoch's mean *hard* accuracy is strictly
+    greater than the running best, which starts at 0. When no epoch achieves
+    non-zero hard accuracy -- routine for small learning-problem counts or
+    short training -- it calls ``load_state_dict(None)`` and raises TypeError.
+    The trained parameters are unaffected: ``train_step`` updates the module in
+    place, so only the "restore the best epoch" step is lost. We catch the
+    TypeError and persist the final-epoch weights instead.
     """
     model = build_nces(
         kb_path,
@@ -99,16 +116,28 @@ def train_nces(
         len(train_data),
     )
     started = time.perf_counter()
-    model.train(
-        list(train_data),
-        epochs=settings.epochs,
-        batch_size=settings.batch_size,
-        num_workers=settings.num_workers,
-        learning_rate=settings.learning_rate,
-        save_model=True,
-        storage_path=str(trained_models_dir),
-        record_runtime=True,
-    )
+    degraded = None
+    try:
+        model.train(
+            list(train_data),
+            epochs=settings.epochs,
+            batch_size=settings.batch_size,
+            num_workers=settings.num_workers,
+            learning_rate=settings.learning_rate,
+            save_model=True,
+            storage_path=str(trained_models_dir),
+            record_runtime=True,
+        )
+    except TypeError as error:
+        if "state_dict to be dict-like" not in str(error):
+            raise
+        degraded = (
+            "Upstream NCESTrainer never recorded best weights (no epoch "
+            "exceeded zero hard accuracy); persisted final-epoch weights "
+            "instead of best-epoch weights."
+        )
+        logger.warning("%s", degraded)
+        _save_final_weights(model, trained_models_dir, settings)
     runtime = time.perf_counter() - started
 
     return {
@@ -117,7 +146,40 @@ def train_nces(
         "batch_size": settings.batch_size,
         "num_train_problems": len(train_data),
         "runtime_seconds": round(runtime, 3),
+        "degraded": degraded,
     }
+
+def _save_final_weights(model, trained_models_dir: Path, settings: NCESSettings) -> None:
+    """Write the artifacts upstream would have written after restoring weights."""
+    import json as _json
+
+    import numpy as np
+    import torch
+
+    models_dir = trained_models_dir / "trained_models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    for name, submodel in model.model.items() if isinstance(model.model, dict) else []:
+        pass  # NCES stores per-learner modules; iterate the public accessor below
+
+    learners = model.model if isinstance(model.model, dict) else {settings.learner_name: model.model}
+    for module in learners.values():
+        net = module["model"] if isinstance(module, dict) else module
+        torch.save(net.state_dict(), models_dir / f"trained_{net.name}.pt")
+
+    with (models_dir / "config.json").open("w", encoding="utf-8") as handle:
+        _json.dump(
+            {
+                "max_length": model.max_length,
+                "proj_dim": model.proj_dim,
+                "num_heads": model.num_heads,
+                "rnn_n_layers": model.rnn_n_layers,
+            },
+            handle,
+        )
+    with (models_dir / "vocab.json").open("w", encoding="utf-8") as handle:
+        _json.dump(model.vocab, handle)
+    np.save(models_dir / "inv_vocab.npy", model.inv_vocab)
 
 
 def evaluate_nces(
@@ -136,6 +198,8 @@ def evaluate_nces(
     Each hypothesis is rendered to DL syntax, its extension is computed with
     the reasoner, and the extension is compared to the target extension.
     """
+    from ontolearn.learning_problem import PosNegLPStandard
+    from owlapy.owl_individual import OWLNamedIndividual
     from owlapy.render import DLSyntaxObjectRenderer
 
     if not problems:
@@ -152,12 +216,13 @@ def evaluate_nces(
 
     records: list[dict[str, Any]] = []
     for problem in problems:
-        positives = [local_name(iri) for iri in problem.pos_example]
-        negatives = [local_name(iri) for iri in problem.neg_example]
+        positives = {OWLNamedIndividual(iri) for iri in problem.pos_example}
+        negatives = {OWLNamedIndividual(iri) for iri in problem.neg_example}
+        lp = PosNegLPStandard(pos=positives, neg=negatives)
 
         started = time.perf_counter()
         try:
-            predictions = model.fit(positives, negatives)
+            predictions = model.fit(lp)
             hypotheses = list(model.best_hypotheses(n=1) or [])
         except Exception as error:  # noqa: BLE001 - a single LP may fail
             logger.warning(
