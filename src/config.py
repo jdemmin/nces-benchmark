@@ -214,7 +214,7 @@ class EmbeddingSettings:
         ]
 
     @classmethod
-    def from_json(cls, path: Path | None = None) -> "EmbeddingSettings":
+    def from_json(cls, path: Path | None = None) -> EmbeddingSettings:
         payload = _read_json(path or INPUT_DIR / "embedding_settings.json")
         return cls(
             model_name=str(payload.get("model_name", "Keci")),
@@ -261,7 +261,7 @@ class NCESSettings:
         return [self.learner_name]
 
     @classmethod
-    def from_json(cls, path: Path | None = None) -> "NCESSettings":
+    def from_json(cls, path: Path | None = None) -> NCESSettings:
         payload = _read_json(path or INPUT_DIR / "nces_settings.json")
         return cls(
             learner_name=str(payload.get("learner_name", "GRU")),
