@@ -12,8 +12,8 @@ from typing import Any
 
 from src.benchmarking.metrics import aggregate_by_complexity, calculate_metrics
 from src.config import NCESSettings
-from src.data.lp import LearningProblem, getOWLNamedIndividuals
-from src.data.ontology import concept_extension, local_name
+from src.data.lp import LearningProblem
+from src.data.ontology import concept_extension
 
 logger = logging.getLogger(__name__)
 

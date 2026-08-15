@@ -185,7 +185,7 @@ def _expand(names: Sequence[str], namespace: str) -> list[str]:
     """Expand local names back into full IRIs where possible."""
     expanded = []
     for name in names:
-        if name.startswith("http://") or name.startswith("https://"):
+        if name.startswith(("http://", "https://")):
             expanded.append(name)
         else:
             expanded.append(f"{namespace}{name}" if namespace else name)

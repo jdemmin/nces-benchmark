@@ -153,7 +153,7 @@ def run_benchmark(
             logger.info("=== %s | seed %d ===", kb_name, seed)
             try:
                 report = run_single(kb_name, seed, config, output_dir=base)
-            except Exception as error:  # noqa: BLE001 - keep the suite running
+            except Exception as error:
                 logger.exception("Benchmark run failed for %s seed %d", kb_name, seed)
                 failures.append(
                     {"knowledge_base": kb_name, "seed": seed, "error": str(error)}
