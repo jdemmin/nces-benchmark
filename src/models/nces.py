@@ -226,18 +226,23 @@ def evaluate_nces(
             hypotheses = list(model.best_hypotheses(n=1) or [])
         except Exception as error:  # noqa: BLE001 - a single LP may fail
             logger.warning(
-                "NCES failed on %s (%s): %s", problem.id, problem.target_concept, error
+                "NCES failed on %s (%s): %s: %s",
+                problem.id,
+                problem.target_concept,
+                type(error).__name__,
+                error,
             )
             records.append(
                 {
                     "id": problem.id,
                     "target_concept": problem.target_concept,
+                    "hypotheses": "",
                     "complexity": problem.complexity,
                     "error": str(error),
+                    "error_type": type(error).__name__,
                 }
             )
             continue
-        runtime = time.perf_counter() - started
         del predictions
 
         hypothesis = hypotheses[0] if hypotheses else None
@@ -254,6 +259,7 @@ def evaluate_nces(
         target = target or frozenset(problem.pos_example)
 
         metrics = calculate_metrics(predicted, target, all_individuals)
+        runtime = time.perf_counter() - started
         negative_extension = set(all_individuals) - set(target)
         records.append(
             {
