@@ -58,7 +58,7 @@ def test_training_data_is_written_with_local_names(problems, tmp_path: Path) -> 
     assert "positive examples" in examples and "negative examples" in examples
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["male"]["positive examples"] == ["stefan", "markus"]
+    assert payload[0]["positive examples"] == ["stefan", "markus"]
 
 
 def pytest_approx(value: float, tolerance: float = 1e-9):
