@@ -163,8 +163,11 @@ def test_cli_overrides_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(runner, "run_benchmark", capture)
 
+    input_dir = Path(__file__).parent / "input" / "test_runner.py"
+
     exit_code = cli.main(
         [
+            "--input-dir", str(input_dir),
             "--benchmark-name", "bench2",
             "--seeds", "7",
             "--embedding-model", "TransE",
