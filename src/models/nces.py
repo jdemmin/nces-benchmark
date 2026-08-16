@@ -8,7 +8,7 @@ import logging
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from owlapy import owl_expression_to_dl
 
@@ -121,7 +121,7 @@ def train_nces(
     degraded = None
     try:
         model.train(
-            list(train_data),
+            cast(Any, list(train_data)),
             epochs=settings.epochs,
             batch_size=settings.batch_size,
             num_workers=settings.num_workers,
