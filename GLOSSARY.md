@@ -93,9 +93,37 @@ the *subject matter*, independent of this project's implementation.
   are exactly equal. This is the strictest success criterion the benchmark
   reports; a hypothesis can score high F1 without being semantically
   equivalent.
-- **Complexity** — the DL-expression length of a generated target concept.
-  Higher values mean a syntactically larger concept and, generally, a harder
-  learning problem. Used to bucket results in the `complexity_summary`.
+- **Complexity** — the multi-dimensional characterisation of a target
+  concept's structure and semantic difficulty.Serialized as an object,
+  never a bare integer. Its fields divide into structural measures,
+  computed from the expression alone, and hardness measures, which require
+  the reasoner. Never "difficulty" or "level".
+- **DL length** — the token count of a rendered DL expression: atomic
+  concepts and constructors each score 1. One structural field within
+  complexity. This was the entirety of complexity before v2; see §11.
+- **Hardness** — The reasoner-derived, extension-dependent fields: extension
+  ratio, atomic baseline, redundancy. A subset of complexity's fields.
+- **Nesting depth** — the maximum quantifier nesting of a concept expression.
+  A ⊓ B has depth 0; ∃ r.A has depth 1; ∃ r.(A ⊓ ∃ s.B) has depth 2.
+- **Constructor profile** — the multiset of DL constructors occurring in an
+  expression, as a mapping from constructor to occurrence count.
+- **Expressivity class** — the smallest DL fragment containing an expression:
+  EL, ALC, or ALCHIQD. Determined by which constructors are present,
+  independent of the beyond_alc setting that permitted them.
+- **Hardness — the semantic**, reasoner-derived component of complexity:
+  extension ratio, atomic baseline F1, and redundancy. Distinguished from
+  structural complexity because it depends on the knowledge base, not only
+  the expression.
+- **Extension ratio** — \(\lvert T \rvert / \lvert U \rvert\), the fraction
+  of all individuals in the target extension. Values near 0 or 1 indicate
+  a degenerate class balance.
+- **Atomic baseline F1** — the best F1 achievable by any single atomic class,
+  computed over extensions. The floor a hypothesis must clear to demonstrate
+  non-trivial learning.
+- **Lift** — a hypothesis's F1 minus the atomic baseline F1 of its learning
+  problem. May be negative. The headline metric for non-trivial learning.
+- **Redundant target concept** — a target concept whose extension equals that
+  of some atomic class, making it learnable far below its structural complexity.
 
 ### Learning problems
 
@@ -134,7 +162,7 @@ The vocabulary for this project's own moving parts.
 > **Naming note.** The third-party library is `dicee` (lowercase, as
 > installed from PyPI). This project's module wrapping it is
 > `src/models/dice.py`. Referring to the library, write `dicee`; referring to
-> our module or the model family, write DICE.
+> the module or the model family, write DICE.
 
 ### Execution units
 
@@ -171,6 +199,7 @@ The vocabulary for this project's own moving parts.
 | `src/config.py` | Typed settings dataclasses; translates project JSON field names into upstream keyword arguments. |
 | `src/paths.py` | The canonical output directory layout and knowledge-base resolution. |
 | `src/logging_utils.py` | Console and per-run file logging. |
+| `src/data/complexity.py` | Complexity computation: structural measures from DL expressions, hardness measures from the reasoner.|
 | `src/data/ontology.py` | OWL parsing, RDF-triple extraction, individual enumeration, extension computation. |
 | `src/data/lp.py` | Learning-problem generation, the canonical schema, and splitting. |
 | `src/models/dice.py` | DICE dataset preparation, embedding training and search, entity-embedding export, random baseline. |
@@ -188,16 +217,20 @@ input.
    enumerate individuals.
 2. **Learning-problem generation** — produce target concepts with example
    sets (§5).
-3. **Learning-problem splitting** — partition problems into disjoint
+3. **Hardness annotation** — compute each target concept's extension, extension
+    ratio, atomic baseline F1, and redundancy flag; populate the hardness
+    fields of its complexity. Runs once per knowledge base, before splitting,
+    and its extensions are cached for reuse during evaluation.
+4. **Learning-problem splitting** — partition problems into disjoint
    train/validation/test sets.
-4. **Embedding stage** — write DICE triple splits, run the hyperparameter
+5. **Embedding stage** — write DICE triple splits, run the hyperparameter
    search, export the winning entity embeddings, and generate the random
    baseline.
-5. **NCES training** — train the learner on the train split, once per
+6. **NCES training** — train the learner on the train split, once per
    embedding condition.
-6. **NCES evaluation** — for each held-out problem, synthesize a hypothesis,
+7. **NCES evaluation** — for each held-out problem, synthesize a hypothesis,
    compute its extension, and score it against the target extension.
-7. **Result aggregation** — summarize per run, per knowledge base, and per
+8. **Result aggregation** — summarize per run, per knowledge base, and per
    suite.
 
 ### Standard coding terms
@@ -259,23 +292,36 @@ parameter — it exposes a boolean `beyond_alc` — so `src/config.py` maps
 `max_child_length` upstream and `num_rand_samples` is `max_num_lps`. These
 translations live in `DataGenerationSettings.lpgen_kwargs()`.
 
-On the name rho. In KB2Data.__init__, rho is the local variable holding the constructed ExpressRefinement operator — the conventional DL symbol \(\rho\) for a refinement operator. It is not a settable parameter. Three fields shape it: beyond_alc toggles the five use_* constructor flags as a group, refinement_expressivity becomes expressivity, and downsample_refinements becomes downsample
+On the name rho. In KB2Data.__init__, rho is the local variable holding the constructed ExpressRefinement operator — the conventional DL symbol \(\rho\) for a refinement operator.
+It is not a settable parameter. Three fields shape it: beyond_alc toggles the five use_* constructor flags as a group,
+refinement_expressivity becomes expressivity, and downsample_refinements becomes downsample.
 
 ### Learning-problem schema
 
 Every generated learning problem is serialized as:
 
 ```json
-{
   "id": "lp_0000",
   "target_concept": "male ⊓ ∃ hasChild.person",
   "pos_example": ["http://example.com/father#stefan"],
   "neg_example": ["http://example.com/father#anna"],
-  "complexity": 4,
+  "complexity": {
+    "dl_length": 4,
+    "depth": 1,
+    "constructors": { "⊓": 1, "∃": 1 },
+    "num_atomic_classes": 2,
+    "num_roles": 1,
+    "expressivity": "EL",
+    "extension_size": 2,
+    "extension_ratio": 0.33,
+    "atomic_baseline_f1": 0.8,
+    "redundant": false
+  },
   "num_pos": 1,
   "num_neg": 1
-}
 ```
+> The four hardness fields are null immediately after generation and are populated by the hardness annotation stage,
+> which runs once per knowledge base after ontology parsing. Structural fields are always present.
 
 - `id` — stable identifier within one benchmark run.
 - `target_concept` — DL-syntax string.
@@ -349,12 +395,14 @@ Per-problem fields in a report's `results` array:
 | `accuracy`, `precision`, `recall`, `f1`, `jaccard`, `semantic_equivalence` | The metrics above. |
 | `runtime_seconds` | Wall-clock time for this problem. |
 | `error` | Present only if NCES raised; the problem is then excluded from aggregates. |
+| `complexity`	| The full complexity object, copied from the learning problem.
+| `lift` | f1 minus atomic_baseline_f1. Negative when the hypothesis underperforms the best atomic class.
 
 Run-level and embedding-level fields:
 
 | Field | Contents |
 | --- | --- |
-| `complexity_summary` | Per-complexity aggregates: count, mean F1, mean accuracy, mean precision, mean recall, mean Jaccard, semantic-equivalence rate. |
+| `complexity_summary` | Aggregates over multiple bucketings — by_dl_length, by_depth, by_expressivity, by_extension_ratio. Each bucket carries count, mean F1, mean accuracy, mean precision, mean recall, mean Jaccard, mean lift, and semantic-equivalence rate. |
 | `best_embedding_config` | The selected DICE configuration with its score and metrics. |
 | `search_trials` | Every attempted hyperparameter trial, including failures. |
 | `validation_error` | Explanatory text when validation MRR was unavailable and a fallback was used. |
@@ -500,7 +548,12 @@ Apply these in code, identifiers, log messages, JSON keys, and prose.
 | report | result file | The structured per-run JSON. |
 | metric / score | — | A numeric outcome. |
 | seed | — | Never a synonym for run or dataset. |
-| complexity | difficulty, level | DL-expression length. |
+| complexity | difficulty, level | The multi-dimensional object. |
+| DL length	| complexity, length, concept length | The scalar token count; one field within complexity. |
+| hardness	| semantic difficulty, hardness score	| The reasoner-derived fields, collectively. Not a single number. |
+| nesting depth	| depth	| depth alone is the LPGen search parameter. |
+| lift	| improvement, delta, gain |	F1 over atomic baseline. |
+| atomic baseline F1 |	baseline, trivial score	| Fully qualified; there are other baselines in this project.
 | target / hypothesis extension | extension | Always qualified. |
 | number of learning problems | problem_count | Clearer in CLI help. |
 | property / role | relation | Ontology terminology. |
@@ -530,3 +583,12 @@ Apply these in code, identifiers, log messages, JSON keys, and prose.
 | Configuration | The resolved settings for one invocation. |
 | Artifact | Any generated file. |
 | Report / Summary | Per-run result / cross-run aggregate. |
+
+## 11. Schema versions
+Learning-problem schema v1 — `complexity` is an integer, the DL-expression length.
+v2 — `complexity` is an object; the v1 integer survives as complexity.dl_length.
+
+LearningProblem.from_dict accepts both. An integer complexity is read as {"dl_length": n}
+with all other fields null, so v1 artifacts remain loadable — but they cannot be bucketed
+by the new axes, and reports generated from them will show null in most summary buckets.
+Regenerate rather than migrate where practical.
