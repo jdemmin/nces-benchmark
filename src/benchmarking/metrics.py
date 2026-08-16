@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
+
+from src.data.complexity import Complexity
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,53 @@ class ExtensionMetrics:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+#: Bucketings reported in every ``complexity_summary``.
+COMPLEXITY_AXES = {
+    "by_dl_length": lambda c: c.dl_length,
+    "by_depth": lambda c: c.depth,
+    "by_expressivity": lambda c: c.expressivity,
+    "by_extension_ratio": lambda c: _ratio_bucket(c.extension_ratio),
+}
+
+def _ratio_bucket(ratio: float | None) -> str:
+    """Bucket an extension ratio into a coarse class-balance band."""
+    if ratio is None:
+        return "unknown"
+    if ratio < 0.05:
+        return "rare"
+    if ratio < 0.25:
+        return "uncommon"
+    if ratio < 0.75:
+        return "balanced"
+    return "dominant"
+
+
+def compute_lift(f1: float, complexity: Complexity) -> float | None:
+    """F1 relative to the best single atomic class.
+
+    ``None`` when the learning problem carries no hardness annotation, since
+    the floor is then unknown. Negative values mean the hypothesis
+    underperformed a trivial atomic concept.
+    """
+    if complexity.atomic_baseline_f1 is None:
+        return None
+    return f1 - complexity.atomic_baseline_f1
+
+
+def summarize_by_complexity(results: Sequence[dict]) -> dict[str, dict]:
+    """Aggregate metrics along every complexity axis."""
+    summary: dict[str, dict] = {}
+    scored = [r for r in results if "error" not in r]
+
+    for axis_name, key_fn in COMPLEXITY_AXES.items():
+        buckets: dict[str, list[dict]] = {}
+        for result in scored:
+            complexity = Complexity.from_dict(result["complexity"])
+            buckets.setdefault(str(key_fn(complexity)), []).append(result)
+        summary[axis_name] = {
+            bucket: _aggregate_by_complexity(entries) for bucket, entries in sorted(buckets.items())
+        }
+    return summary
 
 def calculate_metrics(
     predicted: Collection[str],
@@ -65,7 +114,7 @@ def _ratio(numerator: float, denominator: float) -> float:
     return float(numerator) / float(denominator) if denominator else 0.0
 
 
-def aggregate_by_complexity(
+def _aggregate_by_complexity(
     records: list[dict[str, Any]]
 ) -> dict[str, dict[str, float]]:
     """Build the ``complexity_summary``: per-complexity aggregate metrics."""

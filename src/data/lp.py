@@ -17,9 +17,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from owlapy.owl_individual import OWLNamedIndividual
-
 from src.config import DataGenerationSettings
+from src.data.complexity import Complexity, structural_complexity
 from src.data.ontology import local_name
 
 logger = logging.getLogger(__name__)
@@ -39,7 +38,7 @@ class LearningProblem:
 
     pos_example: list[str]
     neg_example: list[str]
-    complexity: int
+    complexity: Complexity
     num_pos: int = field(default=0)
     num_neg: int = field(default=0)
 
@@ -52,7 +51,9 @@ class LearningProblem:
         object.__setattr__(self, "num_neg", len(self.neg_example))
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["complexity"] = asdict(self.complexity)
+        return payload
 
     def as_nces_datapoint(self) -> tuple[str, dict[str, list[str]]]:
         """Convert to the ``(name, examples)`` tuple that ``NCES`` consumes.
@@ -75,28 +76,18 @@ class LearningProblem:
             target_concept=str(payload["target_concept"]),
             pos_example=list(payload["pos_example"]),
             neg_example=list(payload["neg_example"]),
-            complexity=int(payload.get("complexity", 0)),
+            complexity=Complexity.from_dict(payload["complexity"]),
         )
 
-
-def _concept_complexity(dl_expression: str) -> int:
-    """Approximate DL-expression length from its rendered form.
-
-    Atomic concepts score 1; each constructor token adds 1. This mirrors
-    ``ontolearn.utils.concept_len`` closely enough for bucketing without
-    re-parsing the expression.
-    """
-    tokens = dl_expression.replace("(", " ").replace(")", " ").split()
-    constructors = sum(
-        1 for token in tokens if token in {"⊓", "⊔", "¬", "∃", "∀", "≤", "≥"}
-    )
-    atoms = sum(
-        1
-        for token in tokens
-        if token not in {"⊓", "⊔", "¬", "∃", "∀", "≤", "≥", "."}
-    )
-    return max(1, atoms + constructors)
-
+    def with_complexity(self, complexity: Complexity) -> LearningProblem:
+            """Return a copy carrying an updated complexity object."""
+            return LearningProblem(
+                id=self.id,
+                target_concept=self.target_concept,
+                pos_example=list(self.pos_example),
+                neg_example=list(self.neg_example),
+                complexity=complexity,
+            )
 
 def generate_learning_problems(
     kb_path: Path,
@@ -175,7 +166,7 @@ def _normalise(
                 target_concept=target_concept,
                 pos_example=sorted(positives),
                 neg_example=sorted(negatives),
-                complexity=_concept_complexity(target_concept),
+                complexity=structural_complexity(target_concept),
             )
         )
     return problems
@@ -198,7 +189,9 @@ def save_learning_problems(
     """Serialize learning problems grouped by complexity level."""
     grouped: dict[str, list[dict[str, Any]]] = {}
     for problem in problems:
-        grouped.setdefault(str(problem.complexity), []).append(problem.to_dict())
+        # Grouping by DL-expression length is a coarse proxy for difficulty,
+        # but it is easy to compute and can be used to stratify the train/validation/test split.
+        grouped.setdefault(str(problem.complexity.dl_length), []).append(problem.to_dict())
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -222,29 +215,51 @@ def split_learning_problems(
     *,
     seed: int,
     ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
+    stratify_by: str | None = "depth",
 ) -> dict[str, list[LearningProblem]]:
     """Split learning problems into disjoint train/validation/test sets.
 
     NCES must never be evaluated on a learning problem it trained on, so the
     split is applied to the problems themselves rather than to the examples.
+
+    When ``stratify_by`` is set, problems are grouped by that complexity field
+    and each group is split independently, so every split sees a comparable
+    difficulty mix. Without stratification the test split's difficulty
+    composition drifts across seeds, which inflates apparent variance between
+    embedding conditions.
     """
     if not problems:
         return {"train": [], "validation": [], "test": []}
 
-    shuffled = list(problems)
-    random.Random(seed).shuffle(shuffled)
+    if stratify_by is None:
+        strata = {"all": list(problems)}
+    else:
+        strata = {}
+        for problem in problems:
+            key = str(getattr(problem.complexity, stratify_by))
+            strata.setdefault(key, []).append(problem)
 
-    total = len(shuffled)
-    n_train = max(1, int(total * ratios[0]))
-    n_validation = int(total * ratios[1])
-    if n_train + n_validation >= total:
-        n_validation = max(0, total - n_train - 1)
-
-    return {
-        "train": shuffled[:n_train],
-        "validation": shuffled[n_train : n_train + n_validation],
-        "test": shuffled[n_train + n_validation :] or shuffled[-1:],
+    split: dict[str, list[LearningProblem]] = {
+        "train": [], "validation": [], "test": [],
     }
+
+    for key in sorted(strata):
+        stratum = strata[key]
+        random.Random(f"{seed}:{key}").shuffle(stratum)
+        total = len(stratum)
+        n_train = max(1, int(total * ratios[0]))
+        n_validation = int(total * ratios[1])
+        if n_train + n_validation >= total:
+            n_validation = max(0, total - n_train - 1)
+        split["train"].extend(stratum[:n_train])
+        split["validation"].extend(stratum[n_train : n_train + n_validation])
+        split["test"].extend(stratum[n_train + n_validation :])
+
+    if not split["test"]:
+        # Guarantee a non-empty test split, as the unstratified path did.
+        split["test"] = [split["train"].pop()]
+
+    return split
 
 
 def save_split(
@@ -258,11 +273,3 @@ def save_split(
             "w", encoding="utf-8"
         ) as handle:
             json.dump(payload, handle, indent=2, ensure_ascii=False)
-
-def getOWLNamedIndividual(iri: str) -> OWLNamedIndividual:
-    """Create an OWL named individual from an IRI."""
-    return OWLNamedIndividual(iri)
-    
-def getOWLNamedIndividuals(iris: Iterable[str]) -> set[OWLNamedIndividual]:
-    """Create a set of OWL named individuals from a list of IRIs."""
-    return {OWLNamedIndividual(iri) for iri in iris}

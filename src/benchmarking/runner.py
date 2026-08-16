@@ -11,11 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from src.config import BenchmarkConfiguration
+from src.data.complexity import annotate_hardness
 from src.data.lp import (
+    LearningProblem,
     generate_learning_problems,
     save_learning_problems,
     save_split,
     split_learning_problems,
+    with_complexity,
 )
 from src.data.ontology import individual_iris, load_knowledge_base
 from src.logging_utils import configure_logging
@@ -64,6 +67,31 @@ def run_single(
             config.data_generation,
             seed=seed,
         )
+        # Hardness annotation. Uses the knowledge base only — no embedding-derived
+        # quantity may enter here, or the independent variable is contaminated.
+        atomic_extensions = compute_atomic_class_extensions(knowledge_base)
+        all_individuals = set(all_individuals)
+
+        target_extensions: dict[str, set] = {}
+        annotated: list[LearningProblem] = []
+        for problem in problems:
+            extension = compute_extension(knowledge_base, problem.target_concept)
+            if extension is None:
+                # Same fallback the evaluation stage uses.
+                extension = individual_iris(knowledge_base)
+            target_extensions[problem.id] = extension
+            annotated.append(
+                problem.with_complexity(
+                    annotate_hardness(
+                        problem.complexity,
+                        target_extension=extension,
+                        all_individuals=all_individuals,
+                        atomic_extensions=atomic_extensions,
+                    )
+                )
+            )
+        problems = annotated
+        
         save_learning_problems(problems, paths.learning_problems_path)
         split = split_learning_problems(problems, seed=seed)
         save_split(split, paths.nces_data_dir)

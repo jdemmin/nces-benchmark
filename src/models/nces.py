@@ -10,9 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
-from owlapy import owl_expression_to_dl
-
-from src.benchmarking.metrics import aggregate_by_complexity, calculate_metrics
+from src.benchmarking.metrics import calculate_metrics, summarize_by_complexity
 from src.config import NCESSettings
 from src.data.lp import LearningProblem
 from src.data.ontology import concept_extension
@@ -201,9 +199,9 @@ def evaluate_nces(
     the reasoner, and the extension is compared to the target extension.
     """
     from ontolearn.learning_problem import PosNegLPStandard
+    from owlapy.class_expression import OWLClassExpression
     from owlapy.owl_individual import OWLNamedIndividual
     from owlapy.render import DLSyntaxObjectRenderer
-    from owlapy.class_expression import OWLClassExpression
 
     if not problems:
         return {"split": split_name, "results": [], "complexity_summary": {}}
@@ -226,13 +224,13 @@ def evaluate_nces(
         started = time.perf_counter()
         try:
             predictions = model.fit(lp)
-            # returns Union type. We expect a single OWLClassExpression, so we check the type and raise if not.
+            # returns Union type. Expect a single OWLClassExpression, so check the type and raise if not.
             hypothesis = model.best_hypotheses()
             if not isinstance(hypothesis, OWLClassExpression):
                 raise TypeError(
                     f"Expected a single OWLClassExpression, got {type(hypothesis)}"
                 )
-        except Exception as error:  # noqa: BLE001 - a single LP may fail
+        except Exception as error: # NoQA: BLE001
             logger.warning(
                 "NCES failed on %s (%s): %s: %s",
                 problem.id,
@@ -304,7 +302,7 @@ def evaluate_nces(
         "mean_accuracy": _mean(scored, "accuracy"),
         "semantic_equivalence_rate": _mean(scored, "semantic_equivalence"),
         "results": records,
-        "complexity_summary": aggregate_by_complexity(scored),
+        "complexity_summary": summarize_by_complexity(scored),
     }
 
 

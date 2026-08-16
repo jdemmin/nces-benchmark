@@ -3,7 +3,7 @@ services:
   benchmark:
     build: .
     image: nces-benchmark-v2:latest
-    container_name: nces-benchmark-v2
+    container_name: nces-benchmark-v2-linux
     volumes:
       - ./datasets:/app/datasets:ro
       - ./input:/app/input:ro

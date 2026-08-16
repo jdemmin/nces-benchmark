@@ -200,7 +200,7 @@ class EmbeddingSettings:
                 f"Choose one of {', '.join(DICE_MODELS)}."
             )
 
-    def search_grid(self) -> list["EmbeddingSettings"]:
+    def search_grid(self) -> list[EmbeddingSettings]:
         """Hyperparameter grid: base/doubled dimension x base/halved batch.
 
         Returns one :class:`EmbeddingSettings` per hyperparameter trial.
@@ -302,7 +302,7 @@ class ProjectSettings:
             raise ValueError("project_settings.json must define at least one seed.")
 
     @classmethod
-    def from_json(cls, path: Path | None = None) -> "ProjectSettings":
+    def from_json(cls, path: Path | None = None) -> ProjectSettings:
         payload = _read_json(path or INPUT_DIR / "project_settings.json")
         return cls(
             seeds=[int(s) for s in payload.get("seeds", [1, 2, 3, 4, 5])],
@@ -324,7 +324,7 @@ class BenchmarkConfiguration:
     knowledge_bases: list[str]
 
     @classmethod
-    def load(cls, input_dir: Path | None = None) -> "BenchmarkConfiguration":
+    def load(cls, input_dir: Path | None = None) -> BenchmarkConfiguration:
         base = input_dir or INPUT_DIR
         project = ProjectSettings.from_json(base / "project_settings.json")
         data_generation = DataGenerationSettings.from_json(

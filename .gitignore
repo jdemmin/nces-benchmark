@@ -1,6 +1,7 @@
 # project-specific ignores
 /.conda
 /Output
+rm_out.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
