@@ -152,7 +152,7 @@ def run_single(
 
         # --- Stages 6-7: NCES training and evaluation, per condition -----------
         logger.info("\n----- Reached Stage 6/7 -----\n")
-        _update_nces_config(config, embedding_report)
+        #_update_nces_config(config, embedding_report)
         train_data = prepare_nces_training_data(
             split["train"], paths.nces_data_dir / "nces_train_data.json"
         )
@@ -166,6 +166,7 @@ def run_single(
             # dimensionality as the training data. If the embedding stage
             # produced embeddings of a different dimensionality, the
             # training will fail.
+            logger.info("\n----- Stage 6/7: NCES started training -----\n")
             training = train_nces(
                 kb_path,
                 Path(embeddings_path),
@@ -173,6 +174,7 @@ def run_single(
                 train_data,
                 config.nces,
             )
+            logger.info("\n----- Stage 6/7: NCES started evaluating -----\n")
             evaluation = evaluate_nces(
                 kb_path,
                 Path(embeddings_path),
@@ -350,16 +352,16 @@ def _summarise(kb_name: str, reports: Sequence[dict[str, Any]]) -> dict[str, Any
         },
     }
 
-def _update_nces_config(config: dict[str, Any], embedding_report: dict[str, Any]) -> None:
-    """Update the NCES config with the embedding report."""
-    for condition, payload in embedding_report.items():
-        if "embeddings_path" in payload:
-            config..nces.embedding_paths[condition] = payload["embeddings_path"]
-        else:
-            logger.warning(
-                "Embedding report for condition %s does not contain embeddings_path",
-                condition,
-            )
+#def _update_nces_config(config: dict[str, Any], embedding_report: dict[str, Any]) -> None:
+#    """Update the NCES config with the embedding report."""
+#    for condition, payload in embedding_report.items():
+#        if "embeddings_path" in payload:
+#            config.nces.embedding_paths[condition] = payload["embeddings_path"]
+#        else:
+#            logger.warning(
+#                "Embedding report for condition %s does not contain embeddings_path",
+#                condition,
+#            )
 
 
 def _avg(values: Sequence[float]) -> float:
