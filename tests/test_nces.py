@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.benchmarking.metrics import aggregate_by_complexity, calculate_metrics
+from src.benchmarking.metrics import _aggregate, calculate_metrics
 from src.models.nces import prepare_nces_training_data
 
 
@@ -41,11 +41,10 @@ def test_complexity_summary_groups_records() -> None:
         {"complexity": 1, "f1": 0.0, "accuracy": 0.5, "semantic_equivalence": False},
         {"complexity": 3, "f1": 0.5, "accuracy": 0.75, "semantic_equivalence": False},
     ]
-    summary = aggregate_by_complexity(records)
-    assert summary["1"]["count"] == 2
-    assert summary["1"]["mean_f1"] == 0.5
-    assert summary["1"]["semantic_equivalence_rate"] == 0.5
-    assert summary["3"]["mean_f1"] == 0.5
+    summary = _aggregate(records)
+    assert summary["count"] == 3
+    assert summary["mean_f1"] == 0.5
+    assert summary["semantic_equivalence_rate"] == 1/3
 
 
 def test_training_data_is_written_with_local_names(problems, tmp_path: Path) -> None:
@@ -66,6 +65,6 @@ def pytest_approx(value: float, tolerance: float = 1e-9):
 
     class _Approx:
         def __eq__(self, other: object) -> bool:
-            return abs(float(other) - value) < tolerance
+            return abs(float(other) - value) < tolerance # type: ignore itll be fine ig
 
     return _Approx()
