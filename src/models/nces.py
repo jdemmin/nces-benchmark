@@ -98,7 +98,7 @@ def train_nces(
     non-zero hard accuracy -- routine for small learning-problem counts or
     short training -- it calls ``load_state_dict(None)`` and raises TypeError.
     The trained parameters are unaffected: ``train_step`` updates the module in
-    place, so only the "restore the best epoch" step is lost. We catch the
+    place, so only the "restore the best epoch" step is lost. Catch the
     TypeError and persist the final-epoch weights instead.
     """
     model = build_nces(

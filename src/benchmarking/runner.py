@@ -45,7 +45,8 @@ def run_single(
     output_dir: Path,
 ) -> dict[str, Any]:
     """Execute one benchmark run: one (knowledge base, seed) pair."""
-    # ... ontology parsing ...
+    # ... Stage 1: ontology parsing ...
+    logger.info("\n----- Reached Stage 1 -----\n")
     kb_path = resolve_knowledge_base(knowledge_base_name)
     paths = run_paths(
         config.project.benchmark_name,
@@ -151,6 +152,7 @@ def run_single(
 
         # --- Stages 6-7: NCES training and evaluation, per condition -----------
         logger.info("\n----- Reached Stage 6/7 -----\n")
+        _update_nces_config(config, embedding_report)
         train_data = prepare_nces_training_data(
             split["train"], paths.nces_data_dir / "nces_train_data.json"
         )
@@ -160,6 +162,10 @@ def run_single(
             embeddings_path = embedding_report[condition].embeddings_path
             trained_models_dir = paths.trained_models_dir / condition
 
+            # TODO: Be aware that NCES requires the embeddings to have the same
+            # dimensionality as the training data. If the embedding stage
+            # produced embeddings of a different dimensionality, the
+            # training will fail.
             training = train_nces(
                 kb_path,
                 Path(embeddings_path),
@@ -343,6 +349,17 @@ def _summarise(kb_name: str, reports: Sequence[dict[str, Any]]) -> dict[str, Any
             for condition, values in conditions.items()
         },
     }
+
+def _update_nces_config(config: dict[str, Any], embedding_report: dict[str, Any]) -> None:
+    """Update the NCES config with the embedding report."""
+    for condition, payload in embedding_report.items():
+        if "embeddings_path" in payload:
+            config..nces.embedding_paths[condition] = payload["embeddings_path"]
+        else:
+            logger.warning(
+                "Embedding report for condition %s does not contain embeddings_path",
+                condition,
+            )
 
 
 def _avg(values: Sequence[float]) -> float:
