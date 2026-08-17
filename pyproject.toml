@@ -16,5 +16,5 @@ packages = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers --cov=nces-benchmark --cov-report html"
 filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
