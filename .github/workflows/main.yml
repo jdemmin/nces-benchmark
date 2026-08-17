@@ -114,7 +114,7 @@ jobs:
             -v "${{ github.workspace }}/input:/app/input:ro" \
             -v "${{ github.workspace }}/Output:/app/Output" \
             ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
-            --datasets father --seeds 1 \
+            --datasets semantic_bible --seeds 1 \
             --num-problems 8 --dice-epochs 2 --nces-epochs 5 \
             --benchmark-name ci_smoke
 
