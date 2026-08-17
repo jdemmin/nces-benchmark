@@ -49,13 +49,33 @@ _BEYOND_ALC = frozenset({
 class Hardness:
     """Reasoner-derived characterisation of a target concept's extension."""
 
-    extension_size: int
-    extension_ratio: float
-    atomic_baseline_f1: float
-    redundant: bool
+    extension_size: int | None
+    extension_ratio: float | None
+    atomic_baseline_f1: float | None
+    redundant: bool | None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> Hardness:
+        """Deserialize a hardness object."""
+        return cls(
+            extension_size=payload.get("extension_size"),
+            extension_ratio=payload.get("extension_ratio"),
+            atomic_baseline_f1=payload.get("atomic_baseline_f1"),
+            redundant=payload.get("redundant"),
+        )
+
+    @staticmethod
+    def get_blank_hardness() -> Hardness:
+        """Return a copy with the hardness fields blanked out."""
+        return Hardness(
+            extension_size=None,
+            extension_ratio=None,
+            atomic_baseline_f1=None,
+            redundant=None,
+        )
 
 @dataclass(frozen=True)
 class Complexity:
@@ -68,7 +88,7 @@ class Complexity:
     num_atomic_classes: int
     num_roles: int
     expressivity: str
-    hardness: Hardness | None = None
+    hardness: Hardness
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -92,7 +112,8 @@ class Complexity:
     @property
     def is_annotated(self) -> bool:
         """Whether the hardness fields have been populated."""
-        return self.hardness is not None
+        # The hardness fields are all None when unpopulated, so we can check any one of them.
+        return self.hardness.atomic_baseline_f1 is not None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any] | int) -> Complexity:
@@ -109,6 +130,7 @@ class Complexity:
                 num_atomic_classes=0,
                 num_roles=0,
                 expressivity="unknown",
+                hardness=Hardness.get_blank_hardness(),
             )
         return cls(
             dl_length=int(payload["dl_length"]),
@@ -117,12 +139,7 @@ class Complexity:
             num_atomic_classes=int(payload.get("num_atomic_classes", 0)),
             num_roles=int(payload.get("num_roles", 0)),
             expressivity=str(payload.get("expressivity", "unknown")),
-            hardness=Hardness(
-                extension_size=payload.get("extension_size") or 0,
-                extension_ratio=payload.get("extension_ratio") or 0.0,
-                atomic_baseline_f1=payload.get("atomic_baseline_f1") or 0.0,
-                redundant=payload.get("redundant") or False,
-            ) if "extension_size" in payload else None,
+            hardness=Hardness.from_dict(payload.get("hardness", Hardness.get_blank_hardness().to_dict())),
         )
 
 def structural_complexity(dl_expression: str) -> Complexity:
@@ -162,6 +179,7 @@ def structural_complexity(dl_expression: str) -> Complexity:
         num_atomic_classes=len(atomic_classes),
         num_roles=len(roles),
         expressivity=_expressivity(present),
+        hardness=Hardness.get_blank_hardness(),
     )
 
 
@@ -176,7 +194,7 @@ def _expressivity(present: frozenset[str]) -> str:
 def _tokenize(dl_expression: str) -> list[str]:
     """Split a DL expression, keeping brackets and dots as separate tokens."""
     spaced = dl_expression
-    for symbol in ("(", ")", "."):
+    for symbol in set(CONSTRUCTORS) | {"(", ")", "."}:
         spaced = spaced.replace(symbol, f" {symbol} ")
     return spaced.split()
 
@@ -288,6 +306,7 @@ def structural_complexity_from_owl(expression) -> Complexity:
         num_atomic_classes=len(classes),
         num_roles=len(roles),
         expressivity=_expressivity(present),
+        hardness=Hardness.get_blank_hardness(),
     )
 
 def atomic_baseline_f1(

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from src.data.complexity import Complexity, Hardness
 from src.data.lp import (
     LearningProblem,
     load_learning_problems,
@@ -17,7 +18,13 @@ def test_degenerate_problem_is_rejected() -> None:
     with pytest.raises(ValueError, match="no negative examples"):
         LearningProblem(
             id="x", target_concept="male", pos_example=["a"], neg_example=[],
-            complexity=1,
+            complexity=Complexity(
+                dl_length=1, 
+                num_atomic_classes=1, 
+                num_roles=0, 
+                expressivity="ALC", 
+                hardness=Hardness.get_blank_hardness(), 
+                depth=1, constructors={"a": 1}),
         )
 
 
@@ -35,14 +42,21 @@ def test_round_trip_grouped_by_complexity(problems, tmp_path: Path) -> None:
     assert {p.id for p in loaded} == {p.id for p in problems}
 
 
-def test_split_is_disjoint_and_deterministic(problems) -> None:
+def test_split_is_disjoint_and_deterministic() -> None:
     many = [
         LearningProblem(
             id=f"lp_{i:04d}",
             target_concept=f"C{i}",
             pos_example=["a"],
             neg_example=["b"],
-            complexity=1,
+            complexity=Complexity(
+                dl_length=1, 
+                num_atomic_classes=1, 
+                num_roles=0, 
+                expressivity="ALC", 
+                hardness=Hardness.get_blank_hardness(), 
+                depth=1, constructors={"a": 1}
+            ),
         )
         for i in range(20)
     ]

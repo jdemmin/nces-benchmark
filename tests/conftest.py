@@ -41,6 +41,7 @@ def kb_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def problems():
+    from src.data.complexity import Complexity, Hardness
     from src.data.lp import LearningProblem
 
     namespace = "http://example.com/father#"
@@ -50,13 +51,25 @@ def problems():
             target_concept="male",
             pos_example=[f"{namespace}stefan", f"{namespace}markus"],
             neg_example=[f"{namespace}anna", f"{namespace}michelle"],
-            complexity=1,
+            complexity=Complexity(
+                dl_length=1, 
+                num_atomic_classes=1, 
+                num_roles=0, 
+                expressivity="ALC", 
+                hardness=Hardness.get_blank_hardness(), 
+                depth=1, constructors={"a": 1}),
         ),
         LearningProblem(
             id="lp_0001",
             target_concept="∃ hasChild.male",
             pos_example=[f"{namespace}stefan", f"{namespace}anna"],
             neg_example=[f"{namespace}markus"],
-            complexity=3,
+            complexity=Complexity(
+                dl_length=3, 
+                num_atomic_classes=1, 
+                num_roles=1, 
+                expressivity="ALC", 
+                hardness=Hardness.get_blank_hardness(), 
+                depth=2, constructors={"a": 1}),
         ),
     ]

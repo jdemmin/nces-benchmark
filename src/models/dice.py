@@ -25,7 +25,7 @@ class EmbeddingResult:
 
     model_name: str
     embeddings_path: Path
-    condition: str
+    embedding_condition: str
     embedding_dim: int
     batch_size: int
     score: float | None = None
@@ -37,7 +37,7 @@ class EmbeddingResult:
         return {
             "model_name": self.model_name,
             "embeddings_path": str(self.embeddings_path),
-            "embedding_condition": self.condition,
+            "embedding_condition": self.embedding_condition,
             "embedding_dim": self.embedding_dim,
             "batch_size": self.batch_size,
             "score": self.score,
@@ -332,7 +332,7 @@ def build_embeddings(
     settings: EmbeddingSettings,
     *,
     seed: int,
-    conditions: Sequence[str],
+    embedding_conditions: Sequence[str],
 ) -> dict[str, EmbeddingResult]:
     """Run the full embedding stage for every requested condition.
 
@@ -349,7 +349,7 @@ def build_embeddings(
     results: dict[str, EmbeddingResult] = {}
     chosen = settings
 
-    if "dice" in conditions:
+    if "dice" in embedding_conditions:
         best, report, trials, validation_error = search_best_embedding_setting(
             data_dir, embeddings_dir, settings, seed=seed
         )
@@ -362,7 +362,7 @@ def build_embeddings(
         results["dice"] = EmbeddingResult(
             model_name=best.model_name,
             embeddings_path=output_path,
-            condition="dice",
+            embedding_condition="dice",
             embedding_dim=best.embedding_dim,
             batch_size=best.batch_size,
             score=score,
@@ -375,7 +375,7 @@ def build_embeddings(
             validation_error=validation_error,
         )
 
-    if "random" in conditions:
+    if "random" in embedding_conditions:
         output_path = embeddings_dir / f"{chosen.model_name}_random.csv"
         # Match the exported DICE width, not the configured dimension: some
         # models store several components per dimension.
@@ -393,7 +393,7 @@ def build_embeddings(
         results["random"] = EmbeddingResult(
             model_name=chosen.model_name,
             embeddings_path=output_path,
-            condition="random",
+            embedding_condition="random",
             embedding_dim=chosen.embedding_dim,
             batch_size=chosen.batch_size,
         )
@@ -404,7 +404,7 @@ def build_embeddings(
             {
                 "triple_counts": counts,
                 "num_entities": len(entity_names),
-                "conditions": {
+                "embedding_conditions": {
                     name: result.to_dict() for name, result in results.items()
                 },
             },

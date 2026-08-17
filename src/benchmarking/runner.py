@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from src.config import BenchmarkConfiguration, EmbeddingSettings
+from src.config import BenchmarkConfiguration
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
     LearningProblem,
@@ -19,7 +19,6 @@ from src.data.lp import (
     split_learning_problems,
 )
 from src.data.ontology import (
-    Triple,
     compute_atomic_class_extensions,
     concept_extension,
     individual_iris,
@@ -149,7 +148,7 @@ def run_single(
 
     conditions: dict[str, Any] = {}
     for condition in config.project.embedding_conditions:
-        embeddings_path = embedding_report["embedding_paths"][condition]
+        embeddings_path = embedding_report[condition].embeddings_path
         trained_models_dir = paths.trained_models_dir / condition
 
         training = train_nces(
@@ -183,7 +182,7 @@ def run_single(
         "num_atomic_classes": len(atomic_extensions),
         "split_sizes": {name: len(items) for name, items in split.items()},
         "embedding": embedding_report,
-        "conditions": conditions,
+        "embedding_conditions": conditions,
     }
 
 def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
@@ -200,9 +199,11 @@ def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
         "redundant": {},
     }
     for problem in problems:
-        complexity = problem.complexity
         for axis, counts in axes.items():
-            key = str(getattr(complexity, axis))
+            try:
+                key = str(getattr(problem.complexity, axis))
+            except AttributeError:
+                key = str(getattr(problem.complexity.hardness, axis))
             counts[key] = counts.get(key, 0) + 1
 
     for axis, counts in axes.items():
@@ -286,7 +287,7 @@ def run_embedding_stage(
             paths.embeddings_data_dir,
             benchmark_settings.embedding,
             seed=seed,
-            conditions=benchmark_settings.project.embedding_conditions,
+            embedding_conditions=benchmark_settings.project.embedding_conditions,
         )
 
 
