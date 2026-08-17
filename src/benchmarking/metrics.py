@@ -31,7 +31,7 @@ COMPLEXITY_AXES = {
     "by_dl_length": lambda c: c.dl_length,
     "by_depth": lambda c: c.depth,
     "by_expressivity": lambda c: c.expressivity,
-    "by_extension_ratio": lambda c: _ratio_bucket(c.extension_ratio),
+    "by_extension_ratio": lambda c: _ratio_bucket(c.hardness.extension_ratio),
 }
 
 def _ratio_bucket(ratio: float | None) -> str:
@@ -54,9 +54,9 @@ def compute_lift(f1: float, complexity: Complexity) -> float | None:
     the floor is then unknown. Negative values mean the hypothesis
     underperformed a trivial atomic concept.
     """
-    if complexity.atomic_baseline_f1 is None:
+    if complexity.hardness.atomic_baseline_f1 is None:
         return None
-    return f1 - complexity.atomic_baseline_f1
+    return f1 - complexity.hardness.atomic_baseline_f1
 
 
 def summarize_by_complexity(results: Sequence[dict]) -> dict[str, dict]:
@@ -70,7 +70,7 @@ def summarize_by_complexity(results: Sequence[dict]) -> dict[str, dict]:
             complexity = Complexity.from_dict(result["complexity"])
             buckets.setdefault(str(key_fn(complexity)), []).append(result)
         summary[axis_name] = {
-            bucket: _aggregate_by_complexity(entries) for bucket, entries in sorted(buckets.items())
+            bucket: _aggregate(entries) for bucket, entries in sorted(buckets.items(), key=lambda kv: _bucket_sort_key(kv[0]))
         }
     return summary
 
@@ -114,28 +114,26 @@ def _ratio(numerator: float, denominator: float) -> float:
     return float(numerator) / float(denominator) if denominator else 0.0
 
 
-def _aggregate_by_complexity(
-    records: list[dict[str, Any]]
-) -> dict[str, dict[str, float]]:
-    """Build the ``complexity_summary``: per-complexity aggregate metrics."""
-    buckets: dict[str, list[dict[str, Any]]] = {}
-    for record in records:
-        buckets.setdefault(str(record.get("complexity", 0)), []).append(record)
-
-    summary: dict[str, dict[str, float]] = {}
-    for complexity, group in sorted(buckets.items(), key=lambda kv: int(kv[0])):
-        summary[complexity] = {
-            "count": len(group),
-            "mean_f1": _mean(group, "f1"),
-            "mean_accuracy": _mean(group, "accuracy"),
-            "mean_precision": _mean(group, "precision"),
-            "mean_recall": _mean(group, "recall"),
-            "mean_jaccard": _mean(group, "jaccard"),
-            "semantic_equivalence_rate": _mean(group, "semantic_equivalence"),
-        }
-    return summary
+def _aggregate(group: list[dict[str, Any]]) -> dict[str, float | int]:
+    """Aggregate metrics over a single bucket of scored results."""
+    return {
+        "count": len(group),
+        "mean_f1": _mean(group, "f1"),
+        "mean_accuracy": _mean(group, "accuracy"),
+        "mean_precision": _mean(group, "precision"),
+        "mean_recall": _mean(group, "recall"),
+        "mean_jaccard": _mean(group, "jaccard"),
+        "semantic_equivalence_rate": _mean(group, "semantic_equivalence"),
+    }
 
 
 def _mean(records: list[dict[str, Any]], key: str) -> float:
     values = [float(record.get(key, 0.0)) for record in records]
     return sum(values) / len(values) if values else 0.0
+
+def _bucket_sort_key(key: str) -> tuple[int, float | str]:
+    """Sort numeric buckets numerically, string buckets lexicographically."""
+    try:
+        return (0, float(key))
+    except ValueError:
+        return (1, key)
