@@ -8,6 +8,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from ontolearn.knowledge_base import KnowledgeBase
+
 logger = logging.getLogger(__name__)
 
 #: Predicates that carry no learnable ABox signal for embedding training.
@@ -76,21 +78,21 @@ def parse_triples(kb_path: Path) -> list[Triple]:
     return triples
 
 
-def individual_iris(knowledge_base) -> list[str]:
+def individual_iris(knowledge_base: KnowledgeBase) -> list[str]:
     """Return every named-individual IRI in the knowledge base, sorted."""
     return sorted(individual.str for individual in knowledge_base.individuals())
 
 
-def iter_atomic_concepts(knowledge_base) -> Iterator[str]:
+def iter_atomic_concepts(knowledge_base: KnowledgeBase) -> Iterator[str]:
     """Yield the DL rendering of every atomic concept in the TBox."""
     from owlapy.render import DLSyntaxObjectRenderer
 
     renderer = DLSyntaxObjectRenderer()
-    for owl_class in knowledge_base.ontology().classes_in_signature():
+    for owl_class in knowledge_base.ontology.classes_in_signature():
         yield renderer.render(owl_class)
 
 
-def concept_extension(knowledge_base, dl_expression: str) -> frozenset[str]:
+def concept_extension(knowledge_base: KnowledgeBase, dl_expression: str) -> frozenset[str]:
     """Return the extension of a DL expression as a set of individual IRIs.
 
     The expression is parsed back into an OWL class expression so that the
@@ -111,12 +113,57 @@ def concept_extension(knowledge_base, dl_expression: str) -> frozenset[str]:
         individual.str for individual in knowledge_base.individuals(expression)
     )
 
+def compute_atomic_class_extensions(
+    knowledge_base: KnowledgeBase,
+) -> dict[str, frozenset[str]]:
+    """Return the extension of every named class in the TBox.
 
-def _guess_namespace(knowledge_base) -> str:
+    Keyed by the class's DL rendering, so keys line up with the vocabulary
+    used in target concepts and in ``iter_atomic_concepts``. Unlike
+    ``concept_extension`` this does not round-trip through DL syntax: the OWL
+    class objects are handed to the reasoner directly.
+
+    ``owl:Thing`` and ``owl:Nothing`` are excluded. Thing's extension is the
+    whole universe, which would make the atomic baseline trivially high for
+    any large target concept, and Nothing's is empty and never overlaps.
+
+    One reasoner query per class. Compute once per knowledge base and reuse:
+    this is the added cost of the hardness-annotation stage.
+    """
+    from owlapy.class_expression import OWLClass
+    from owlapy.render import DLSyntaxObjectRenderer
+
+    renderer = DLSyntaxObjectRenderer()
+    extensions: dict[str, frozenset[str]] = {}
+
+    for owl_class in knowledge_base.ontology.classes_in_signature():
+        if not isinstance(owl_class, OWLClass):
+            continue
+        if owl_class.is_owl_thing() or owl_class.is_owl_nothing():
+            continue
+        try:
+            extension = frozenset(
+                individual.str
+                for individual in knowledge_base.individuals(owl_class)
+            )
+        except Exception as error:  # noqa: BLE001 - upstream raises bare exceptions
+            logger.warning(
+                "Could not compute extension of %s: %s: %s",
+                owl_class,
+                type(error).__name__,
+                error,
+            )
+            continue
+        extensions[renderer.render(owl_class)] = extension
+
+    logger.info("Computed extensions for %d atomic classes", len(extensions))
+    return extensions
+
+def _guess_namespace(knowledge_base: KnowledgeBase) -> str:
     """Infer the default namespace from the first individual's IRI."""
     for individual in knowledge_base.individuals():
         iri = individual.str
         for separator in ("#", "/"):
             if separator in iri:
                 return iri.rsplit(separator, 1)[0] + separator
-    return "http://example.com/father#"
+    return "http://example.com/SOMETHING_WENT_WRONG#"

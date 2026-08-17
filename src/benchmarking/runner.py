@@ -5,12 +5,11 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from src.config import BenchmarkConfiguration
+from src.config import BenchmarkConfiguration, EmbeddingSettings
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
     LearningProblem,
@@ -18,17 +17,22 @@ from src.data.lp import (
     save_learning_problems,
     save_split,
     split_learning_problems,
-    with_complexity,
 )
-from src.data.ontology import individual_iris, load_knowledge_base
-from src.logging_utils import configure_logging
+from src.data.ontology import (
+    Triple,
+    compute_atomic_class_extensions,
+    concept_extension,
+    individual_iris,
+    load_knowledge_base,
+    parse_triples,
+)
 from src.models.dice import build_embeddings
 from src.models.nces import (
     evaluate_nces,
     prepare_nces_training_data,
     train_nces,
 )
-from src.paths import OUTPUT_DIR, resolve_knowledge_base, run_paths
+from src.paths import OUTPUT_DIR, RunPaths, resolve_knowledge_base, run_paths
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +41,10 @@ def run_single(
     knowledge_base_name: str,
     seed: int,
     config: BenchmarkConfiguration,
-    *,
-    output_dir: Path | None = None,
+    output_dir: Path,
 ) -> dict[str, Any]:
-    """Execute one benchmark run: one knowledge base, one seed.
-
-    Stages: parse the knowledge base, generate learning problems, split them,
-    build embeddings for every condition, then train and evaluate NCES per
-    condition.
-    """
+    """Execute one benchmark run: one (knowledge base, seed) pair."""
+    # ... ontology parsing ...
     kb_path = resolve_knowledge_base(knowledge_base_name)
     paths = run_paths(
         config.project.benchmark_name,
@@ -53,110 +52,170 @@ def run_single(
         knowledge_base_name,
         output_dir=output_dir,
     )
-    paths.mkdirs()
-    handler = configure_logging(paths.logs_dir / f"{knowledge_base_name}.log")
+    knowledge_base = load_knowledge_base(kb_path)
+    all_individuals = individual_iris(knowledge_base)
+    triples = parse_triples(kb_path)
 
-    started = time.perf_counter()
-    try:
-        knowledge_base = load_knowledge_base(kb_path)
-        all_individuals = individual_iris(knowledge_base)
-
-        problems = generate_learning_problems(
-            kb_path,
-            paths.nces_data_dir,
-            config.data_generation,
-            seed=seed,
+    # --- Stage 2: learning-problem generation -------------------------------
+    problems = generate_learning_problems(
+        kb_path,
+        paths.nces_data_dir,
+        config.data_generation,
+        seed=seed,
+    )
+    if not problems:
+        raise RuntimeError(
+            f"No non-degenerate learning problems generated for {knowledge_base_name}."
         )
-        # Hardness annotation. Uses the knowledge base only — no embedding-derived
-        # quantity may enter here, or the independent variable is contaminated.
-        atomic_extensions = compute_atomic_class_extensions(knowledge_base)
-        all_individuals = set(all_individuals)
 
-        target_extensions: dict[str, set] = {}
-        annotated: list[LearningProblem] = []
-        for problem in problems:
-            extension = compute_extension(knowledge_base, problem.target_concept)
-            if extension is None:
-                # Same fallback the evaluation stage uses.
-                extension = individual_iris(knowledge_base)
-            target_extensions[problem.id] = extension
-            annotated.append(
-                problem.with_complexity(
-                    annotate_hardness(
-                        problem.complexity,
-                        target_extension=extension,
-                        all_individuals=all_individuals,
-                        atomic_extensions=atomic_extensions,
-                    )
+    # --- Stage 3: hardness annotation --------------------------------------
+    # Knowledge base only. No embedding-derived quantity may enter here, or
+    # the benchmark's independent variable is contaminated.
+    logger.info("Annotating hardness for %d learning problems", len(problems))
+    atomic_extensions = compute_atomic_class_extensions(knowledge_base)
+    universe = frozenset(all_individuals)
+
+    # Cached so the evaluation stage does not recompute target extensions.
+    target_extensions: dict[str, frozenset[str]] = {}
+    unparsed: list[str] = []
+    annotated: list[LearningProblem] = []
+
+    for problem in problems:
+        extension = concept_extension(knowledge_base, problem.target_concept)
+        if not extension:
+            # Same fallback the evaluation stage uses: sampled positives as
+            # IRI strings. Must not be OWL objects -- they never compare
+            # equal to the IRI strings in atomic_extensions, which would
+            # silently zero out every hardness field.
+            extension = frozenset(problem.pos_example)
+            unparsed.append(problem.id)
+
+        target_extensions[problem.id] = extension
+        annotated.append(
+            problem.annotate_complexity(
+                annotate_hardness(
+                    problem.complexity,
+                    target_extension=extension,
+                    all_individuals=universe,
+                    atomic_extensions=atomic_extensions,
                 )
             )
-        problems = annotated
-        
-        save_learning_problems(problems, paths.learning_problems_path)
-        split = split_learning_problems(problems, seed=seed)
-        save_split(split, paths.nces_data_dir)
+        )
 
-        embeddings = build_embeddings(
+    problems = annotated
+
+    if unparsed:
+        logger.warning(
+            "%d of %d target concepts could not be parsed; used sampled "
+            "positives as their extension (ids: %s%s)",
+            len(unparsed),
+            len(problems),
+            ", ".join(unparsed[:5]),
+            ", ..." if len(unparsed) > 5 else "",
+        )
+
+    _log_complexity_distribution(problems)
+    save_learning_problems(problems, paths.nces_data_dir / "learning_problems.json")
+
+    # --- Stage 4: learning-problem splitting -------------------------------
+    split = split_learning_problems(
+        problems,
+        seed=seed,
+        stratify_by=config.project.stratify_by,
+    )
+    save_split(split, paths.nces_data_dir)
+    logger.info(
+        "Split %d learning problems into %d train / %d validation / %d test",
+        len(problems),
+        len(split["train"]),
+        len(split["validation"]),
+        len(split["test"]),
+    )
+
+    # --- Stage 5: embedding stage ------------------------------------------
+    #TODO implement _run_embedding_stage
+    #TODO create class for embedding report to store paths and metrics
+    embedding_report = run_embedding_stage(
+        paths=paths,
+        kb_path=kb_path,
+        benchmark_settings=config,
+        seed=seed,
+    )
+
+    # --- Stages 6-7: NCES training and evaluation, per condition -----------
+    train_data = prepare_nces_training_data(
+        split["train"], paths.nces_data_dir / "nces_train_data.json"
+    )
+
+    conditions: dict[str, Any] = {}
+    for condition in config.project.embedding_conditions:
+        embeddings_path = embedding_report["embedding_paths"][condition]
+        trained_models_dir = paths.trained_models_dir / condition
+
+        training = train_nces(
             kb_path,
-            paths.embeddings_dir,
-            paths.embeddings_data_dir,
-            config.embedding,
-            seed=seed,
-            conditions=config.project.embedding_conditions,
+            Path(embeddings_path),
+            trained_models_dir,
+            train_data,
+            config.nces,
         )
-
-        train_data = prepare_nces_training_data(
-            split["train"], paths.nces_data_dir / "nces_train_data.json"
+        evaluation = evaluate_nces(
+            kb_path,
+            Path(embeddings_path),
+            trained_models_dir,
+            split["test"],
+            config.nces,
+            knowledge_base=knowledge_base,
+            all_individuals=all_individuals,
+            target_extensions=target_extensions,
+            split_name="test",
         )
-        logger.info("Prepared NCES training data with %d problems", len(train_data))
+        conditions[condition] = {"training": training, "evaluation": evaluation}
 
-        conditions: dict[str, Any] = {}
-        for condition, embedding in embeddings.items():
-            models_dir = paths.trained_models_dir / condition
-            training = train_nces(
-                kb_path,
-                embedding.embeddings_path,
-                models_dir,
-                train_data,
-                config.nces,
+    return {
+        "knowledge_base": knowledge_base_name,
+        "seed": seed,
+        "configuration": config.to_dict(),
+        "num_individuals": len(all_individuals),
+        "num_triples": len(triples),
+        "num_learning_problems": len(problems),
+        "num_unparsed_targets": len(unparsed),
+        "num_atomic_classes": len(atomic_extensions),
+        "split_sizes": {name: len(items) for name, items in split.items()},
+        "embedding": embedding_report,
+        "conditions": conditions,
+    }
+
+def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
+    """Log the spread along each complexity axis.
+
+    Thin strata make stratified splitting degenerate -- a stratum of one or
+    two problems is handed entirely to train -- so this is the signal for
+    whether the configured ``stratify_by`` axis is viable.
+    """
+    axes: dict[str, dict[str, int]] = {
+        "dl_length": {},
+        "depth": {},
+        "expressivity": {},
+        "redundant": {},
+    }
+    for problem in problems:
+        complexity = problem.complexity
+        for axis, counts in axes.items():
+            key = str(getattr(complexity, axis))
+            counts[key] = counts.get(key, 0) + 1
+
+    for axis, counts in axes.items():
+        rendered = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+        logger.info("Complexity distribution by %s: %s", axis, rendered)
+        thin = [k for k, v in counts.items() if v < 3]
+        if thin and axis != "redundant":
+            logger.warning(
+                "Axis %r has strata with fewer than 3 learning problems (%s); "
+                "stratifying on it will starve the validation and test splits",
+                axis,
+                ", ".join(sorted(thin)),
             )
-            evaluation = {
-                name: evaluate_nces(
-                    kb_path,
-                    embedding.embeddings_path,
-                    models_dir,
-                    split[name],
-                    config.nces,
-                    knowledge_base=knowledge_base,
-                    all_individuals=all_individuals,
-                    split_name=name,
-                )
-                for name in ("validation", "test")
-            }
-            conditions[condition] = {
-                "best_embedding_config": embedding.to_dict(),
-                "training": training,
-                "evaluation": evaluation,
-            }
-
-        report = {
-            "knowledge_base": knowledge_base_name,
-            "knowledge_base_path": str(kb_path),
-            "seed": seed,
-            "benchmark_name": config.project.benchmark_name,
-            "num_individuals": len(all_individuals),
-            "num_learning_problems": len(problems),
-            "split_sizes": {k: len(v) for k, v in split.items()},
-            "embedding_conditions": conditions,
-            "configuration": config.to_dict(),
-            "runtime_seconds": round(time.perf_counter() - started, 3),
-        }
-        _write_json(report, paths.report_path)
-        return report
-    finally:
-        if handler is not None:
-            logging.getLogger().removeHandler(handler)
-            handler.close()
 
 
 def run_benchmark(
@@ -213,6 +272,22 @@ def run_benchmark(
     }
     _write_json(summary, benchmark_dir / "benchmark_summary.json")
     return summary
+
+def run_embedding_stage(
+        paths: RunPaths,
+        kb_path: Path,
+        benchmark_settings: BenchmarkConfiguration,
+        seed: int,
+    )-> dict[str, Any]:
+    
+    return build_embeddings(
+            kb_path,
+            paths.embeddings_dir,
+            paths.embeddings_data_dir,
+            benchmark_settings.embedding,
+            seed=seed,
+            conditions=benchmark_settings.project.embedding_conditions,
+        )
 
 
 def _summarise(kb_name: str, reports: Sequence[dict[str, Any]]) -> dict[str, Any]:

@@ -290,6 +290,7 @@ class ProjectSettings:
     embedding_conditions: list[str] = field(
         default_factory=lambda: list(EMBEDDING_CONDITIONS)
     )
+    stratify_by: str = "depth"
 
     def __post_init__(self) -> None:
         unknown = set(self.embedding_conditions) - set(EMBEDDING_CONDITIONS)
@@ -310,6 +311,7 @@ class ProjectSettings:
             embedding_conditions=list(
                 payload.get("embedding_conditions", EMBEDDING_CONDITIONS)
             ),
+            stratify_by=str(payload.get("stratify_by", "depth")),
         )
 
 

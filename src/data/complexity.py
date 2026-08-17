@@ -13,6 +13,7 @@ learning problem, which is held constant across embedding conditions.
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -44,6 +45,17 @@ _BEYOND_ALC = frozenset({
     MIN_CARDINALITY, MAX_CARDINALITY, EXACT_CARDINALITY,
 })
 
+@dataclass(frozen=True)
+class Hardness:
+    """Reasoner-derived characterisation of a target concept's extension."""
+
+    extension_size: int
+    extension_ratio: float
+    atomic_baseline_f1: float
+    redundant: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 @dataclass(frozen=True)
 class Complexity:
@@ -56,12 +68,7 @@ class Complexity:
     num_atomic_classes: int
     num_roles: int
     expressivity: str
-
-    # Hardness — requires the reasoner; None until annotated.
-    extension_size: int | None = None
-    extension_ratio: float | None = None
-    atomic_baseline_f1: float | None = None
-    redundant: bool | None = None
+    hardness: Hardness | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -69,10 +76,7 @@ class Complexity:
     def with_hardness(
         self,
         *,
-        extension_size: int,
-        extension_ratio: float,
-        atomic_baseline_f1: float,
-        redundant: bool,
+        hardness: Hardness,
     ) -> Complexity:
         """Return a copy with the hardness fields populated."""
         return Complexity(
@@ -82,16 +86,13 @@ class Complexity:
             num_atomic_classes=self.num_atomic_classes,
             num_roles=self.num_roles,
             expressivity=self.expressivity,
-            extension_size=extension_size,
-            extension_ratio=extension_ratio,
-            atomic_baseline_f1=atomic_baseline_f1,
-            redundant=redundant,
+            hardness=hardness,
         )
 
     @property
     def is_annotated(self) -> bool:
         """Whether the hardness fields have been populated."""
-        return self.extension_size is not None
+        return self.hardness is not None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any] | int) -> Complexity:
@@ -116,10 +117,12 @@ class Complexity:
             num_atomic_classes=int(payload.get("num_atomic_classes", 0)),
             num_roles=int(payload.get("num_roles", 0)),
             expressivity=str(payload.get("expressivity", "unknown")),
-            extension_size=payload.get("extension_size"),
-            extension_ratio=payload.get("extension_ratio"),
-            atomic_baseline_f1=payload.get("atomic_baseline_f1"),
-            redundant=payload.get("redundant"),
+            hardness=Hardness(
+                extension_size=payload.get("extension_size") or 0,
+                extension_ratio=payload.get("extension_ratio") or 0.0,
+                atomic_baseline_f1=payload.get("atomic_baseline_f1") or 0.0,
+                redundant=payload.get("redundant") or False,
+            ) if "extension_size" in payload else None,
         )
 
 def structural_complexity(dl_expression: str) -> Complexity:
@@ -288,24 +291,29 @@ def structural_complexity_from_owl(expression) -> Complexity:
     )
 
 def atomic_baseline_f1(
-    target_extension: set,
-    atomic_extensions: dict[str, set],
+    target_extension: Collection[str],
+    atomic_extensions: Mapping[str, Collection[str]],
 ) -> tuple[float, str | None]:
     """Best F1 achievable by any single atomic class.
 
-    Returns the score and the winning class IRI. This is the floor a
-    hypothesis must clear for its learning problem to count as non-trivially
-    solved.
+    Returns the score and the winning class IRI, or ``(0.0, None)`` when no
+    atomic class overlaps the target at all. This is the floor a hypothesis
+    must clear for its learning problem to count as non-trivially solved.
     """
+    target = frozenset(target_extension)
+    if not target:
+        return 0.0, None
+
     best_score = 0.0
     best_class: str | None = None
 
     for iri, extension in atomic_extensions.items():
-        intersection = len(target_extension & extension)
+        candidate = frozenset(extension)
+        intersection = len(target & candidate)
         if not intersection:
             continue
-        precision = intersection / len(extension)
-        recall = intersection / len(target_extension)
+        precision = intersection / len(candidate)
+        recall = intersection / len(target)
         score = 2 * precision * recall / (precision + recall)
         if score > best_score:
             best_score, best_class = score, iri
@@ -316,27 +324,38 @@ def atomic_baseline_f1(
 def annotate_hardness(
     complexity: Complexity,
     *,
-    target_extension: set,
-    all_individuals: set,
-    atomic_extensions: dict[str, set],
+    target_extension: Collection[str],
+    all_individuals: Collection[str],
+    atomic_extensions: Mapping[str, Collection[str]],
 ) -> Complexity:
-    """Populate the hardness fields of a complexity object."""
-    if not target_extension:
-        return complexity.with_hardness(
+    """Populate the hardness fields of a complexity object.
+
+    Depends on the knowledge base alone. No embedding-derived quantity may
+    enter here: hardness describes the learning problem, which is held
+    constant across embedding conditions.
+    """
+    target = frozenset(target_extension)
+    universe = frozenset(all_individuals)
+
+    if not target:
+        return complexity.with_hardness(hardness=Hardness(
             extension_size=0,
             extension_ratio=0.0,
             atomic_baseline_f1=0.0,
             redundant=False,
-        )
+        ))
 
-    baseline, _ = atomic_baseline_f1(target_extension, atomic_extensions)
+    baseline, _ = atomic_baseline_f1(
+        target_extension=target,
+        atomic_extensions=atomic_extensions,
+    )
     redundant = any(
-        extension == target_extension for extension in atomic_extensions.values()
+        frozenset(extension) == target for extension in atomic_extensions.values()
     )
 
-    return complexity.with_hardness(
-        extension_size=len(target_extension),
-        extension_ratio=len(target_extension) / max(1, len(all_individuals)),
+    return complexity.with_hardness(hardness=Hardness(
+        extension_size=len(target),
+        extension_ratio=len(target) / len(universe) if universe else 0.0,
         atomic_baseline_f1=baseline,
         redundant=redundant,
-    )
+    ))

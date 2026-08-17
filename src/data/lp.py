@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config import DataGenerationSettings
-from src.data.complexity import Complexity, structural_complexity
+from src.data.complexity import Complexity, Hardness, structural_complexity
 from src.data.ontology import local_name
 
 logger = logging.getLogger(__name__)
@@ -79,7 +79,7 @@ class LearningProblem:
             complexity=Complexity.from_dict(payload["complexity"]),
         )
 
-    def with_complexity(self, complexity: Complexity) -> LearningProblem:
+    def _with_complexity(self, complexity: Complexity) -> LearningProblem:
             """Return a copy carrying an updated complexity object."""
             return LearningProblem(
                 id=self.id,
@@ -88,6 +88,14 @@ class LearningProblem:
                 neg_example=list(self.neg_example),
                 complexity=complexity,
             )
+
+    def annotate_complexity(self, complexity: Complexity) -> LearningProblem:
+        """Return a copy carrying an updated complexity object."""
+        return self._with_complexity(complexity=complexity)
+
+    def annotate_hardness(self, complexity: Complexity, hardness: Hardness) -> LearningProblem:
+            """Return a copy carrying an updated hardness object for a given complexity."""
+            return self._with_complexity(self.annotate_complexity(complexity=complexity).complexity.with_hardness(hardness=hardness))
 
 def generate_learning_problems(
     kb_path: Path,

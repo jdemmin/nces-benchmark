@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -188,6 +188,7 @@ def evaluate_nces(
     trained_models_dir: Path,
     problems: Sequence[LearningProblem],
     settings: NCESSettings,
+    target_extensions: Mapping[str, frozenset[str]] | None = None,
     *,
     knowledge_base,
     all_individuals: Sequence[str],
@@ -243,7 +244,7 @@ def evaluate_nces(
                     "id": problem.id,
                     "target_concept": problem.target_concept,
                     "hypotheses": "",
-                    "complexity": problem.complexity,
+                    "complexity": problem.complexity.to_dict(),
                     "error": str(error),
                     "error_type": type(error).__name__,
                 }
@@ -259,9 +260,13 @@ def evaluate_nces(
             if hypothesis_dl
             else frozenset()
         )
-        target = concept_extension(knowledge_base, problem.target_concept)
-        # Fall back to the sampled positives when the target cannot be parsed.
-        target = target or frozenset(problem.pos_example)
+        # Reuse the extension computed during hardness annotation; the two
+        # stages must agree, including when the parse fallback fired.
+        if target_extensions is not None and problem.id in target_extensions:
+            target = target_extensions[problem.id]
+        else:
+            target = concept_extension(knowledge_base, problem.target_concept)
+            target = target or frozenset(problem.pos_example)
 
         metrics = calculate_metrics(predicted, target, all_individuals)
         runtime = time.perf_counter() - started
@@ -271,7 +276,7 @@ def evaluate_nces(
                 "id": problem.id,
                 "target_concept": problem.target_concept,
                 "hypotheses": hypothesis_dl,
-                "complexity": problem.complexity,
+                "complexity": problem.complexity.to_dict(),
                 "num_pos": problem.num_pos,
                 "num_neg": problem.num_neg,
                 "target_positive_count": len(target),
