@@ -28,8 +28,6 @@ def test_splits_are_disjoint():
     split = split_learning_problems(make_population(), seed=1)
     ids = [{p.id for p in problems} for problems in split.values()]
     assert not (ids[0] & ids[1])
-    assert not (ids[0] & ids[2])
-    assert not (ids[1] & ids[2])
 
 
 def test_split_is_exhaustive():
@@ -72,7 +70,7 @@ def test_test_split_never_empty_on_thin_input():
 
 def test_empty_input():
     split = split_learning_problems([], seed=1)
-    assert split == {"train": [], "validation": [], "test": []}
+    assert split == {"train": [], "test": []}
 
 
 def test_strata_seeded_independently():

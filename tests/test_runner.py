@@ -7,7 +7,7 @@ training DICE or NCES.
 
 from __future__ import annotations
 
-import json
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -78,7 +78,6 @@ def test_run_single_produces_report(
     config: BenchmarkConfiguration,
     kb_path: Path,
     problems,
-    tmp_path: Path,
 ) -> None:
     from src.benchmarking import runner
     from src.models.dice import EmbeddingResult
@@ -98,7 +97,7 @@ def test_run_single_produces_report(
         "generate_learning_problems",
         lambda *a, **k: problems * 5,
     )
-
+    tmp_path = Path(tempfile.mkdtemp())  # otherwise test prefix would trigger dicee path check
     def fake_embeddings(*args, **kwargs):
         return {
             condition: EmbeddingResult(
@@ -135,7 +134,7 @@ def test_run_single_produces_report(
     assert report["seed"] == 1
     assert set(report["embedding_conditions"]) == {"dice", "random"}
     assert report["num_learning_problems"] == 10
-    assert set(report["split_sizes"]) == {"train", "validation", "test"}
+    assert set(report["split_sizes"]) == {"train", "test"}
 
     #paths = run_paths("benchmark1", 1, "father", output_dir=tmp_path)
     #assert paths.report_path.is_file()

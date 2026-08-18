@@ -1,7 +1,7 @@
 {
   "model_name": "Keci",
   "embedding_dim": 64,
-  "epochs": 50,
+  "epochs": 20,
   "batch_size": 64,
   "scoring_technique": "KvsAll",
   "trainer": "torchCPUTrainer",

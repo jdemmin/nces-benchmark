@@ -95,7 +95,10 @@ class LearningProblem:
 
     def annotate_hardness(self, complexity: Complexity, hardness: Hardness) -> LearningProblem:
             """Return a copy carrying an updated hardness object for a given complexity."""
-            return self._with_complexity(self.annotate_complexity(complexity=complexity).complexity.with_hardness(hardness=hardness))
+            return self._with_complexity(
+                self.annotate_complexity(complexity=complexity)
+                .complexity.with_hardness(hardness=hardness)
+            )
 
 def generate_learning_problems(
     kb_path: Path,
@@ -217,15 +220,32 @@ def load_learning_problems(path: Path) -> list[LearningProblem]:
         for payload in problems
     ]
 
+def _get_strata_key(stratify_by: str | None, problem: LearningProblem) -> str:
+    """
+    Return a string key for stratifying learning problems.
+    Missing or invalid keys default to DL-expression length.
+    """
+    if problem is None:
+        raise AttributeError("Cannot get strata key: Problem is None")
+    strata_target = problem.complexity
+    invalid_strata = (
+        stratify_by is None
+        or stratify_by not in Complexity.__dataclass_fields__
+    )
+    if stratify_by in Hardness.__dataclass_fields__:
+        strata_target = strata_target.hardness
+        invalid_strata = strata_target is None or strata_target.atomic_baseline_f1 is None
+    return str(problem.complexity.dl_length) if invalid_strata else str(getattr(strata_target, stratify_by)) # type: ignore Already validated that stratify_by is a valid field of Complexity or Hardness
 
 def split_learning_problems(
     problems: Sequence[LearningProblem],
     *,
     seed: int,
     ratios: tuple[float, float] = (0.8, 0.2),
-    stratify_by: str | None = "depth",
+    stratify_by: str | None = "dl_length",
 ) -> dict[str, list[LearningProblem]]:
-    """Split learning problems into disjoint train/test sets.
+    """
+    Split learning problems into disjoint train/test sets.
 
     NCES must never be evaluated on a learning problem it trained on, so the
     split is applied to the problems themselves rather than to the examples.
@@ -239,13 +259,9 @@ def split_learning_problems(
     if not problems:
         return {"train": [], "test": []}
 
-    if stratify_by is None:
-        strata = {"all": list(problems)}
-    else:
-        strata = {}
-        for problem in problems:
-            key = str(getattr(problem.complexity, stratify_by))
-            strata.setdefault(key, []).append(problem)
+    strata = {}
+    for problem in problems:
+        strata.setdefault(_get_strata_key(stratify_by, problem), []).append(problem)
 
     split: dict[str, list[LearningProblem]] = {
         "train": [], "test": [],

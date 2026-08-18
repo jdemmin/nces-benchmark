@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +47,42 @@ class EmbeddingResult:
             "validation_error": self.validation_error,
         }
 
+#: dicee's ReadFromDisk does substring matching on full glob paths.
+DICEE_RESERVED_PATH_TOKENS: tuple[str, ...] = ("train", "valid", "test")
+
+
+def _assert_dicee_safe_dataset_dir(directory: Path) -> None:
+    """Reject dataset directories dicee would mis-parse.
+
+    ``ReadFromDisk`` iterates ``glob.glob(dataset_dir + '/*')`` and routes
+    each file with ``if 'train' in i``, where ``i`` is the *full* path. A
+    reserved token anywhere in an ancestor directory therefore captures
+    every split file into ``raw_train_set``, leaving validation and test
+    unset and the eval report train-only.
+    """
+    parent = str(directory.resolve().parent).lower()
+    offenders = [t for t in DICEE_RESERVED_PATH_TOKENS if t in parent]
+    if offenders:
+        raise ValueError(
+            f"The DICE dataset directory {directory} has ancestor path "
+            f"segments containing {offenders}. dicee matches these as "
+            f"substrings of the full path and would route valid.txt and "
+            f"test.txt into the training set. Choose a benchmark name or "
+            f"output directory without these tokens."
+        )
+
+def stage_dicee_dataset(data_dir: Path, staging_root: Path) -> Path:
+    """Copy the split files into a dicee-safe directory.
+
+    Returns the directory to pass as ``dataset_dir``.
+    """
+    import shutil
+
+    staged = staging_root / "kg"
+    staged.mkdir(parents=True, exist_ok=True)
+    for name in ("train", "valid", "test"):
+        shutil.copyfile(data_dir / f"{name}.txt", staged / f"{name}.txt")
+    return staged
 
 def write_dicee_dataset(
     triples: Sequence[Triple],
@@ -61,6 +98,11 @@ def write_dicee_dataset(
     """
     if not triples:
         raise ValueError("Cannot build a DICE dataset from zero triples.")
+
+    # dicee's ReadFromDisk matches 'train'/'valid'/'test' as substrings of
+    # the *full* glob path, so any of those words in an ancestor directory
+    # silently misroutes every split file. See KNOWN_ISSUES.md.
+    _assert_dicee_safe_dataset_dir(directory)
 
     directory.mkdir(parents=True, exist_ok=True)
     shuffled = [triple.as_tuple() for triple in triples]
@@ -100,7 +142,8 @@ def train_embedding_model(
     *,
     seed: int,
 ) -> dict[str, Any]:
-    """Train one DICE model and return its report.
+    """
+    Train one DICE model and return its report.
 
     Uses ``dicee.executer.Execute`` with an explicit ``Namespace`` because the
     ``Namespace`` defaults differ from the ``dicee`` CLI defaults (notably
@@ -111,6 +154,9 @@ def train_embedding_model(
 
     run_dir.parent.mkdir(parents=True, exist_ok=True)
 
+    # TODO: dice does not use the given dataset_dir as intended.
+    # It does not consider validation/test files in the given
+    # directory... but why???
     args = Namespace()
     args.model = settings.model_name
     args.dataset_dir = str(dataset_dir)
@@ -133,6 +179,9 @@ def train_embedding_model(
         settings.epochs,
     )
     report = Execute(args).start()
+    logger.info(
+        f"DICE report section: {sorted(report)}"
+    )
     return dict(report)
 
 
@@ -152,7 +201,12 @@ def _selection_score(report: dict[str, Any]) -> tuple[float | None, str | None]:
 
     train = report.get("Train")
     if isinstance(train, dict) and "MRR" in train:
-        return float(train["MRR"]), "Only train MRR was available."
+        return None, (
+            "Only train MRR was available; refusing to select on it "
+            "(train MRR rewards memorization). Check that valid.txt/"
+            "test.txt are discovered by dicee and that eval_model="
+            "'train_val_test' took effect."
+        )
 
     return None, "No MRR metric was reported by DICE."
 
@@ -203,7 +257,16 @@ def search_best_embedding_setting(
         record["run_dir"] = str(run_dir)
         trials.append(record)
 
-        if score is not None and (best is None or score > best[0]):
+        # negates selection by insertion order
+        if score is not None and (
+            best is None
+            or score > best[0]
+            or (
+                score == best[0]
+                and (trial_settings.embedding_dim, trial_settings.batch_size)
+                < (best[1].embedding_dim, best[1].batch_size)
+            )
+        ):
             best = (score, trial_settings, report, validation_error)
 
     if best is None:
@@ -260,7 +323,6 @@ def export_entity_embeddings(
     names, positions = _entity_index_mapping(model)
     matrix = _entity_embedding_matrix(model)[positions]
 
-    #TODO saved for later
     if expected_dim is not None and matrix.shape[1] != expected_dim:
         raise ValueError(
             f"DICE exported {matrix.shape[1]}-dimensional entity embeddings "
@@ -329,10 +391,11 @@ def build_embeddings(
     kb_path: Path,
     embeddings_dir: Path,
     data_dir: Path,
-    settings: EmbeddingSettings,
+    embedding_settings: EmbeddingSettings,
     *,
     seed: int,
     embedding_conditions: Sequence[str],
+    expected_dim: int,
 ) -> dict[str, EmbeddingResult]:
     """Run the full embedding stage for every requested condition.
 
@@ -347,17 +410,16 @@ def build_embeddings(
         {triple.subject for triple in triples} | {triple.object for triple in triples}
     )
     results: dict[str, EmbeddingResult] = {}
-    chosen = settings
+    chosen = embedding_settings
 
     if "dice" in embedding_conditions:
         best, report, trials, validation_error = search_best_embedding_setting(
-            data_dir, embeddings_dir, settings, seed=seed
+            data_dir, embeddings_dir, embedding_settings, seed=seed
         )
         chosen = best
         run_dir = _best_trial_run_dir(trials, best)
-        #TODO this seems not to happen. Why?
         output_path = embeddings_dir / f"{best.model_name}.csv"
-        export_entity_embeddings(run_dir, output_path, expected_dim=None)
+        export_entity_embeddings(run_dir, output_path, expected_dim=expected_dim)
         score, _ = _selection_score(report)
         results["dice"] = EmbeddingResult(
             model_name=best.model_name,

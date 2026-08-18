@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -55,7 +56,7 @@ def run_single(
         output_dir=output_dir,
     )
     paths.mkdirs()
-    handler = configure_logging(paths.logs_dir / f"{knowledge_base_name}.log")
+    handler = configure_logging(paths.logs_dir / f"{knowledge_base_name}_{seed}.log")
     started = time.perf_counter()
     try:
         knowledge_base = load_knowledge_base(kb_path)
@@ -165,7 +166,11 @@ def run_single(
             # produced embeddings of a different dimensionality, the
             # training will fail.
             logger.info("\n----- Stage 6/7: NCES started training -----\n")
-            csv_dim = get_csv_dimension(embeddings_path) 
+            try:
+                csv_dim = embedding_report[condition].embedding_dim or get_csv_dimension(embeddings_path)
+            except Exception as e:
+                logger.error("Failed to get CSV dimension: %s", e)
+                raise
             training = train_nces(
                 kb_path=kb_path,
                 embeddings_path=Path(embeddings_path),
@@ -188,6 +193,7 @@ def run_single(
                 m=csv_dim,
             )
             conditions[condition] = {"training": training, "evaluation": evaluation}
+        logger.info("\n----- All stages complete -----\n")
         return {
             "knowledge_base": knowledge_base_name,
             "seed": seed,
@@ -201,9 +207,8 @@ def run_single(
             "embedding": embedding_report,
             "embedding_conditions": conditions,
             "runtime_seconds" : round(time.perf_counter() - started, 3)
-        }
+        }  
     finally:
-        logger.info("\n----- All stages complete -----\n")
         if handler is not None:
             logging.getLogger().removeHandler(handler)
             handler.close()
@@ -308,16 +313,24 @@ def run_embedding_stage(
         benchmark_settings: BenchmarkConfiguration,
         seed: int,
     )-> dict[str, Any]:
-    
-    return build_embeddings(
-            kb_path,
-            paths.embeddings_dir,
-            paths.embeddings_data_dir,
-            benchmark_settings.embedding,
+    """
+    Run the embedding stage and return the report.
+    Creates a temporary data directory to avoid triggering dicee path checks.
+    Copies the embeddings to the run's embeddings directory so nothing is lost.
+    """
+    temp_data_dir = Path(tempfile.mkdtemp())  # otherwise test prefix would trigger dicee path check
+    report = build_embeddings(
+            kb_path=kb_path,
+            embeddings_dir=paths.embeddings_dir,
+            data_dir=temp_data_dir,
+            embedding_settings=benchmark_settings.embedding,
             seed=seed,
             embedding_conditions=benchmark_settings.project.embedding_conditions,
+            expected_dim=benchmark_settings.nces.embedding_dim
         )
-
+    new_data_dir = report[next(iter(report.keys()))].embeddings_path.parent / "data"
+    paths.embeddings_data_dir.replace(new_data_dir)
+    return report
 
 def _summarise(kb_name: str, reports: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate benchmark runs for one knowledge base across seeds."""

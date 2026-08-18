@@ -211,7 +211,7 @@ Four JSON files in `input/`. Every field has a CLI override.
   "seeds": [1, 2, 3, 4, 5],
   "benchmark_name": "benchmark1",
   "embedding_conditions": ["dice", "random"],
-  "stratify_by": "depth"
+  "stratify_by": "dl_length"
 }
 ```
 
