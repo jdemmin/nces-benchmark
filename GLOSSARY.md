@@ -184,9 +184,8 @@ The vocabulary for this project's own moving parts.
   invocation, assembled from the four `input/*.json` files plus CLI
   overrides, and embedded verbatim in every report.
 - **Settings file** — one of the four JSON files in `input/`. See §5.
-- **Split ratios** — the train/validation/test proportions, `[0.8, 0.1, 0.1]`.
-  Applied independently to RDF triples (for DICE) and to learning problems
-  (for NCES).
+- **Split ratio dice** — the train/validation/test proportions, `[0.8, 0.1, 0.1]` 
+- **Split ratio learning problems** — train/test proportions `[0.8, 0.2]`.
 
 ---
 
@@ -222,7 +221,7 @@ input.
     fields of its complexity. Runs once per knowledge base, before splitting,
     and its extensions are cached for reuse during evaluation.
 4. **Learning-problem splitting** — partition problems into disjoint
-   train/validation/test sets.
+   train/test sets.
 5. **Embedding stage** — write DICE triple splits, run the hyperparameter
    search, export the winning entity embeddings, and generate the random
    baseline.

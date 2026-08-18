@@ -71,7 +71,7 @@ stages:
      ├─► learning-problem generation ──► target concepts + example sets
      │        (ontolearn LPGen)
      │
-     ├─► learning-problem splitting ───► train / validation / test
+     ├─► learning-problem splitting ───► train / test
      │
      ├─► embedding stage
      │     ├── triple split ─────────► train.txt / valid.txt / test.txt
@@ -160,7 +160,6 @@ Output/benchmark1/
         │   ├── data/
         │   │   ├── learning_problems.json    all problems, by complexity
         │   │   ├── train_problems.json
-        │   │   ├── validation_problems.json
         │   │   ├── test_problems.json
         │   │   ├── nces_train_data.json      local-name form for NCES
         │   │   └── LPs.json                  raw ontolearn output
