@@ -42,15 +42,15 @@ data-loader forking all depend on POSIX behavior. Use Docker.
 docker compose build
 
 # 2. Add a knowledge base.
-cp /path/to/father.owl datasets/
+cp /path/to/semantic_bible.owl datasets/
 
 # 3. Smoke test — one seed, tiny epoch counts, a couple of minutes.
 docker compose run --rm benchmark \
-  --datasets father --seeds 1 \
+  --datasets semantic_bible --seeds 1 \
   --num-problems 8 --dice-epochs 2 --nces-epochs 5
 
 # 4. Full run.
-docker compose run --rm benchmark --datasets father --seeds 1 2 3 4 5
+docker compose run --rm benchmark --datasets semantic_bible --seeds 1 2 3 4 5
 ```
 
 Results land in `Output/benchmark1/`. Start with
@@ -146,9 +146,9 @@ handful of examples from scoring perfectly.
 ```text
 Output/benchmark1/
 ├── benchmark_summary.json          across all knowledge bases
-├── father_summary.json             across seeds, for `father`
+├── semantic_bible_summary.json         across seeds, for `semantic_bible`
 └── seed1/
-    └── father/
+    └── semantic_bible/
         ├── embeddings/
         │   ├── Keci.csv                trained DICE entity embeddings
         │   ├── Keci_random.csv         random embedding baseline
@@ -167,7 +167,7 @@ Output/benchmark1/
         │       ├── dice/               weights, dice condition
         │       └── random/             weights, random condition
         └── logs/
-            └── father.log
+            └── semantic_bible.log
 ```
 
 ### Reading the results
@@ -178,7 +178,7 @@ Output/benchmark1/
 {
   "benchmark_name": "benchmark1",
   "per_knowledge_base": {
-    "father": {
+    "semantic_bible": {
       "num_runs": 5,
       "embedding_conditions": {
         "dice":   { "mean_f1": 0.83, "semantic_equivalence_rate": 0.41 },
@@ -219,7 +219,7 @@ Four JSON files in `input/`. Every field has a CLI override.
 
 ```json
 {
-  "kbs": "father",
+  "kbs": "semantic_bible",
   "num_rand_samples": 150,
   "depth": 2,
   "max_child_len": 10,
@@ -313,7 +313,7 @@ docker compose run --rm benchmark \
 
 # Several knowledge bases, verbose.
 docker compose run --rm benchmark \
-  --datasets father animals mutagenesis --seeds 1 2 3 --log-level DEBUG
+  --datasets semantic_bible vicodi mutagenesis --seeds 1 2 3 --log-level DEBUG
 ```
 
 `--help` is dependency-free: heavy imports are lazy, so it does not load

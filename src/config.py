@@ -80,7 +80,7 @@ class DataGenerationSettings:
     ``downsample_refinements`` become ``expressivity`` and ``downsample``.
     """
 
-    kbs: str = "father"
+    kbs: str = "semantic_bible"
     num_rand_samples: int = 150
     depth: int = 2
     max_child_len: int = 10

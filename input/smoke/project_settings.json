@@ -1,6 +1,6 @@
 {
-    "seeds": [1],
-    "benchmark_name": "smoke",
-    "embedding_conditions": ["dice", "random"],
+  "seeds": [1],
+  "benchmark_name": "smoke",
+  "embedding_conditions": ["dice", "random"],
   "stratify_by": "depth"
 }

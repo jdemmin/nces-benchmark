@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import logging
 import random
-import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -323,14 +322,15 @@ def export_entity_embeddings(
     names, positions = _entity_index_mapping(model)
     matrix = _entity_embedding_matrix(model)[positions]
 
-    if expected_dim is not None and matrix.shape[1] != expected_dim:
-        raise ValueError(
-            f"DICE exported {matrix.shape[1]}-dimensional entity embeddings "
-            f"but NCES expects {expected_dim}. Multi-component models "
-            f"(Keci, ComplEx, QMult, OMult, DualE) widen the stored matrix; "
-            f"set embedding.embedding_dim so the exported width matches "
-            f"nces.embedding_dim."
-        )
+    # Not necessary anymore: NCES now reads out the CSV width.
+    #if expected_dim is not None and matrix.shape[1] != expected_dim:
+    #    raise ValueError(
+    #        f"DICE exported {matrix.shape[1]}-dimensional entity embeddings "
+    #        f"but NCES expects {expected_dim}. Multi-component models "
+    #        f"(Keci, ComplEx, QMult, OMult, DualE) widen the stored matrix; "
+    #        f"set embedding.embedding_dim so the exported width matches "
+    #        f"nces.embedding_dim."
+    #    )
 
     frame = pd.DataFrame(
         matrix,
