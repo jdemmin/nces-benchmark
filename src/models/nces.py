@@ -10,7 +10,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
-from src.benchmarking.metrics import calculate_metrics, compute_lift, summarize_by_complexity
+from src.benchmarking.metrics import (
+    calculate_metrics,
+    compute_lift,
+    summarize_by_complexity,
+)
 from src.config import NCESSettings
 from src.data.lp import LearningProblem
 from src.data.ontology import concept_extension

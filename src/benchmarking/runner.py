@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from src.benchmarking.metrics import calculate_metrics
 from src.config import BenchmarkConfiguration
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
@@ -205,7 +204,6 @@ def run_single(
             "num_unparsed_targets": len(unparsed),
             "num_atomic_classes": len(atomic_extensions),
             "split_sizes": {name: len(items) for name, items in split.items()},
-            "embedding": embedding_report,
             "embedding_conditions": conditions,
             "runtime_seconds" : round(time.perf_counter() - started, 3),
         }  
@@ -257,6 +255,13 @@ def run_benchmark(
     output_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run every (knowledge base, seed) combination and aggregate results."""
+    if (config.project.embedding_conditions)[0] == "random" and not config.project.embedding_conditions[1:]:
+        logger.warning(
+            "Random embeddings must follow after other embedding conditions." \
+            "Otherwise, this can lead to a situation where random and the dice" \
+            "embedding differ in dimensionality, which will cause NCES to fail." \
+        )
+        raise ValueError("Random embeddings must follow after other embedding conditions.")
     selected_kbs = list(knowledge_bases or config.knowledge_bases)
     selected_seeds = list(seeds or config.project.seeds)
     base = output_dir or OUTPUT_DIR
