@@ -127,7 +127,8 @@ def train_nces(
             save_model=True,
             storage_path=str(trained_models_dir),
             record_runtime=True,
-        )
+        )  
+        _move_upstream_artifacts(trained_models_dir)
     except TypeError as error:
         if "state_dict to be dict-like" not in str(error):
             raise
@@ -156,16 +157,17 @@ def _save_final_weights(model, trained_models_dir: Path, settings: NCESSettings)
     import numpy as np
     import torch
 
-    models_dir = trained_models_dir / "trained_models"
-    models_dir.mkdir(parents=True, exist_ok=True)
-
-    for name, submodel in model.model.items() if isinstance(model.model, dict) else []:
-        pass  # NCES stores per-learner modules; iterate the public accessor below
+    models_dir = trained_models_dir
+    #models_dir.mkdir(parents=True, exist_ok=True)
 
     learners = model.model if isinstance(model.model, dict) else {settings.learner_name: model.model}
-    for module in learners.values():
+    for learner_name, module in learners.items():
         net = module["model"] if isinstance(module, dict) else module
-        torch.save(net.state_dict(), models_dir / f"trained_{net.name}.pt")
+        net = getattr(net, "module", net)  # unwrap DataParallel
+        torch.save(
+            net.state_dict(), models_dir / f"trained_{learner_name}.pt"
+        )
+        logger.info(_fingerprint(net))
 
     with (models_dir / "config.json").open("w", encoding="utf-8") as handle:
         _json.dump(
@@ -214,6 +216,14 @@ def evaluate_nces(
         settings,
         load_pretrained=True,
     )
+
+    expected = trained_models_dir / f"trained_{settings.learner_name}.pt"
+    if not expected.is_file():
+        raise FileNotFoundError(
+            f"No trained NCES weights at {expected}; evaluation would score an "
+            f"untrained learner. Contents: {sorted(p.name for p in trained_models_dir.glob('*'))}"
+        )
+
     renderer = DLSyntaxObjectRenderer()
 
     records: list[dict[str, Any]] = []
@@ -314,3 +324,15 @@ def evaluate_nces(
 def _mean(records: list[dict[str, Any]], key: str) -> float:
     values = [float(record.get(key, 0.0)) for record in records]
     return sum(values) / len(values) if values else 0.0
+
+def _move_upstream_artifacts(trained_models_dir: Path) -> None:
+    """Flatten NCESTrainer's <dir>/trained_models/ into <dir>/."""
+    nested = trained_models_dir / "trained_models"
+    if not nested.is_dir():
+        return
+    for artifact in nested.iterdir():
+        artifact.replace(trained_models_dir / artifact.name)
+    nested.rmdir()
+
+def _fingerprint(net) -> float:
+    return sum(float(p.detach().abs().sum()) for p in net.parameters())

@@ -168,19 +168,19 @@ def run_single(
             # training will fail.
             logger.info("\n----- Stage 6/7: NCES started training -----\n")
             training = train_nces(
-                kb_path,
-                Path(embeddings_path),
-                trained_models_dir,
-                train_data,
-                config.nces,
+                kb_path=kb_path,
+                embeddings_path=Path(embeddings_path),
+                trained_models_dir=trained_models_dir,
+                train_data=train_data,
+                settings=config.nces,
             )
             logger.info("\n----- Stage 6/7: NCES started evaluating -----\n")
             evaluation = evaluate_nces(
-                kb_path,
-                Path(embeddings_path),
-                trained_models_dir,
-                split["test"],
-                config.nces,
+                kb_path=kb_path,
+                embeddings_path=Path(embeddings_path),
+                trained_models_dir=trained_models_dir,
+                problems=split["test"],
+                settings=config.nces,
                 knowledge_base=knowledge_base,
                 all_individuals=all_individuals,
                 target_extensions=target_extensions,
