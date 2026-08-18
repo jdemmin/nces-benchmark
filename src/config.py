@@ -9,9 +9,12 @@ translate them into the keyword arguments that ``ontolearn``, ``dicee`` and
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from src.paths import INPUT_DIR
 
@@ -145,8 +148,13 @@ class DataGenerationSettings:
 
     @classmethod
     def from_json(cls, path: Path | None = None) -> DataGenerationSettings:
-        payload = _read_json(path or INPUT_DIR / "data_generation_settings.json")
-
+        try:
+            payload = _read_json(path or INPUT_DIR / "data_generation_settings.json")
+        except FileNotFoundError:
+            logger.info(
+                "data_generation_settings.json not found. Using default data generation settings."
+            )
+            return cls()
         # Accept the legacy `rho` spelling: "ALCHIQD" meant beyond_alc=True.
         if "beyond_alc" in payload:
             beyond_alc = bool(payload["beyond_alc"])
@@ -215,7 +223,14 @@ class EmbeddingSettings:
 
     @classmethod
     def from_json(cls, path: Path | None = None) -> EmbeddingSettings:
-        payload = _read_json(path or INPUT_DIR / "embedding_settings.json")
+        try:
+            payload = _read_json(path or INPUT_DIR / "embedding_settings.json")
+        except FileNotFoundError:
+                    # Provide a default embedding settings if the file is missing.
+                    logger.info(
+                        "embedding_settings.json not found. Using default embedding settings."
+                    )
+                    return cls()
         return cls(
             model_name=str(payload.get("model_name", "Keci")),
             embedding_dim=int(payload.get("embedding_dim", 64)),
@@ -227,6 +242,7 @@ class EmbeddingSettings:
             num_core=int(payload.get("num_core", 0)),
             learning_rate=float(payload.get("learning_rate", 0.1)),
         )
+        
 
 
 @dataclass(frozen=True)
@@ -262,7 +278,12 @@ class NCESSettings:
 
     @classmethod
     def from_json(cls, path: Path | None = None) -> NCESSettings:
-        payload = _read_json(path or INPUT_DIR / "nces_settings.json")
+        try:
+            payload = _read_json(path or INPUT_DIR / "nces_settings.json")
+        except FileNotFoundError:
+            # Provide a default NCES settings if the file is missing.
+            logger.info("nces_settings.json not found. Using default NCES settings.")
+            return cls()
         return cls(
             learner_name=str(payload.get("learner_name", "GRU")),
             embedding_dim=int(payload.get("embedding_dim", 64)),
@@ -279,6 +300,7 @@ class NCESSettings:
             learning_rate=float(payload.get("learning_rate", 1e-4)),
             sorted_examples=bool(payload.get("sorted_examples", True)),
         )
+        
 
 
 @dataclass(frozen=True)
@@ -304,7 +326,14 @@ class ProjectSettings:
 
     @classmethod
     def from_json(cls, path: Path | None = None) -> ProjectSettings:
-        payload = _read_json(path or INPUT_DIR / "project_settings.json")
+        try:
+            payload = _read_json(path or INPUT_DIR / "project_settings.json")
+        except FileNotFoundError:
+            # Provide a default project settings if the file is missing.
+            logger.info(
+                "project_settings.json not found. Using default project settings."
+            )
+            return cls()
         return cls(
             seeds=[int(s) for s in payload.get("seeds", [1, 2, 3, 4, 5])],
             benchmark_name=str(payload.get("benchmark_name", "benchmark1")),
@@ -313,7 +342,6 @@ class ProjectSettings:
             ),
             stratify_by=str(payload.get("stratify_by", "depth")),
         )
-
 
 @dataclass(frozen=True)
 class BenchmarkConfiguration:
