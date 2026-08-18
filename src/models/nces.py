@@ -50,6 +50,7 @@ def build_nces(
     embeddings_path: Path,
     trained_models_dir: Path,
     settings: NCESSettings,
+    m: int,
     *,
     load_pretrained: bool,
 ):
@@ -73,7 +74,7 @@ def build_nces(
         drop_prob=settings.drop_prob,
         num_heads=settings.num_heads,
         num_seeds=settings.num_seeds,
-        m=settings.embedding_dim,
+        m=m,
         max_length=settings.max_length,
         load_pretrained=load_pretrained,
         sorted_examples=settings.sorted_examples,
@@ -89,6 +90,7 @@ def train_nces(
     trained_models_dir: Path,
     train_data: Sequence[tuple[str, dict[str, list[str]]]],
     settings: NCESSettings,
+    m: int,
 ) -> dict[str, Any]:
     """Train NCES on the train split and save the weights.
 
@@ -107,6 +109,7 @@ def train_nces(
         trained_models_dir,
         settings,
         load_pretrained=False,
+        m=m,
     )
 
     logger.info(
@@ -190,6 +193,7 @@ def evaluate_nces(
     trained_models_dir: Path,
     problems: Sequence[LearningProblem],
     settings: NCESSettings,
+    m: int,
     target_extensions: Mapping[str, frozenset[str]] | None = None,
     *,
     knowledge_base,
@@ -215,6 +219,7 @@ def evaluate_nces(
         trained_models_dir,
         settings,
         load_pretrained=True,
+        m=m,
     )
 
     expected = trained_models_dir / f"trained_{settings.learner_name}.pt"

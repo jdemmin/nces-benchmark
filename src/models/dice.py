@@ -445,3 +445,10 @@ def _entity_index_mapping(model: Any) -> tuple[list[str], list[int]]:
         # Older dicee stores the mapping as a frame with an "index" column.
         return [str(n) for n in mapping.index], mapping.iloc[:, 0].tolist()
     return [str(k) for k in mapping], list(mapping.values())
+
+def get_csv_dimension(embeddings_path: Path) -> int:
+    """Return the number of columns in the CSV file at ``embeddings_path``."""
+    import pandas as pd
+
+    frame = pd.read_csv(embeddings_path, index_col=0)
+    return frame.shape[1]

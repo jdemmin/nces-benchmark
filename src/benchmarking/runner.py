@@ -27,7 +27,7 @@ from src.data.ontology import (
     parse_triples,
 )
 from src.logging_utils import configure_logging
-from src.models.dice import build_embeddings
+from src.models.dice import build_embeddings, get_csv_dimension
 from src.models.nces import (
     evaluate_nces,
     prepare_nces_training_data,
@@ -83,7 +83,6 @@ def run_single(
         atomic_extensions = compute_atomic_class_extensions(knowledge_base)
         universe = frozenset(all_individuals)
 
-        # Cached so the evaluation stage does not recompute target extensions.
         target_extensions: dict[str, frozenset[str]] = {}
         unparsed: list[str] = []
         annotated: list[LearningProblem] = []
@@ -134,10 +133,9 @@ def run_single(
         )
         save_split(split, paths.nces_data_dir)
         logger.info(
-            "Split %d learning problems into %d train / %d validation / %d test",
+            "Split %d learning problems into %d train / %d test",
             len(problems),
             len(split["train"]),
-            len(split["validation"]),
             len(split["test"]),
         )
 
@@ -167,12 +165,14 @@ def run_single(
             # produced embeddings of a different dimensionality, the
             # training will fail.
             logger.info("\n----- Stage 6/7: NCES started training -----\n")
+            csv_dim = get_csv_dimension(embeddings_path) 
             training = train_nces(
                 kb_path=kb_path,
                 embeddings_path=Path(embeddings_path),
                 trained_models_dir=trained_models_dir,
                 train_data=train_data,
                 settings=config.nces,
+                m=csv_dim,
             )
             logger.info("\n----- Stage 6/7: NCES started evaluating -----\n")
             evaluation = evaluate_nces(
@@ -185,6 +185,7 @@ def run_single(
                 all_individuals=all_individuals,
                 target_extensions=target_extensions,
                 split_name="test",
+                m=csv_dim,
             )
             conditions[condition] = {"training": training, "evaluation": evaluation}
         return {
@@ -236,7 +237,7 @@ def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
         if thin and axis != "redundant":
             logger.warning(
                 "Axis %r has strata with fewer than 3 learning problems (%s); "
-                "stratifying on it will starve the validation and test splits",
+                "stratifying on it will starve the test split",
                 axis,
                 ", ".join(sorted(thin)),
             )
