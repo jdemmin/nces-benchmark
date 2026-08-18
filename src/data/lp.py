@@ -198,7 +198,7 @@ def save_learning_problems(
     grouped: dict[str, list[dict[str, Any]]] = {}
     for problem in problems:
         # Grouping by DL-expression length is a coarse proxy for difficulty,
-        # but it is easy to compute and can be used to stratify the train/validation/test split.
+        # but it is easy to compute and can be used to stratify the train/test split.
         grouped.setdefault(str(problem.complexity.dl_length), []).append(problem.to_dict())
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -222,10 +222,10 @@ def split_learning_problems(
     problems: Sequence[LearningProblem],
     *,
     seed: int,
-    ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
+    ratios: tuple[float, float] = (0.8, 0.2),
     stratify_by: str | None = "depth",
 ) -> dict[str, list[LearningProblem]]:
-    """Split learning problems into disjoint train/validation/test sets.
+    """Split learning problems into disjoint train/test sets.
 
     NCES must never be evaluated on a learning problem it trained on, so the
     split is applied to the problems themselves rather than to the examples.
@@ -237,7 +237,7 @@ def split_learning_problems(
     embedding conditions.
     """
     if not problems:
-        return {"train": [], "validation": [], "test": []}
+        return {"train": [], "test": []}
 
     if stratify_by is None:
         strata = {"all": list(problems)}
@@ -248,7 +248,7 @@ def split_learning_problems(
             strata.setdefault(key, []).append(problem)
 
     split: dict[str, list[LearningProblem]] = {
-        "train": [], "validation": [], "test": [],
+        "train": [], "test": [],
     }
 
     for key in sorted(strata):
@@ -256,12 +256,11 @@ def split_learning_problems(
         random.Random(f"{seed}:{key}").shuffle(stratum)
         total = len(stratum)
         n_train = max(1, int(total * ratios[0]))
-        n_validation = int(total * ratios[1])
-        if n_train + n_validation >= total:
-            n_validation = max(0, total - n_train - 1)
+        n_test = int(total * ratios[1])
+        if n_train + n_test >= total:
+            n_train = total - 1
         split["train"].extend(stratum[:n_train])
-        split["validation"].extend(stratum[n_train : n_train + n_validation])
-        split["test"].extend(stratum[n_train + n_validation :])
+        split["test"].extend(stratum[n_train:])
 
     if not split["test"]:
         # Guarantee a non-empty test split, as the unstratified path did.
