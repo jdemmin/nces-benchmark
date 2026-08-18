@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
-from src.benchmarking.metrics import calculate_metrics, summarize_by_complexity
+from src.benchmarking.metrics import calculate_metrics, compute_lift, summarize_by_complexity
 from src.config import NCESSettings
 from src.data.lp import LearningProblem
 from src.data.ontology import concept_extension
@@ -301,15 +301,16 @@ def evaluate_nces(
                     "negative": len(negative_extension),
                     "total": len(all_individuals),
                 },
-                "target_extension_overlap": {
-                    "intersection": metrics.intersection,
-                    "union": metrics.union,
-                    "jaccard": metrics.jaccard,
-                    "precision": metrics.precision,
-                    "recall": metrics.recall,
-                },
+                #"target_extension_overlap": {
+                #    "intersection": metrics.intersection,
+                #    "union": metrics.union,
+                #    "jaccard": metrics.jaccard,
+                #    "precision": metrics.precision,
+                #    "recall": metrics.recall,
+                #},
                 "runtime_seconds": round(runtime, 3),
                 **metrics.to_dict(),
+                "lift": compute_lift(complexity=problem.complexity, f1=metrics.f1),
             }
         )
 

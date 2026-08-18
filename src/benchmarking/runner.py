@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from src.benchmarking.metrics import calculate_metrics
 from src.config import BenchmarkConfiguration
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
@@ -206,7 +207,7 @@ def run_single(
             "split_sizes": {name: len(items) for name, items in split.items()},
             "embedding": embedding_report,
             "embedding_conditions": conditions,
-            "runtime_seconds" : round(time.perf_counter() - started, 3)
+            "runtime_seconds" : round(time.perf_counter() - started, 3),
         }  
     finally:
         if handler is not None:
@@ -365,18 +366,6 @@ def _summarise(kb_name: str, reports: Sequence[dict[str, Any]]) -> dict[str, Any
             for condition, values in conditions.items()
         },
     }
-
-#def _update_nces_config(config: dict[str, Any], embedding_report: dict[str, Any]) -> None:
-#    """Update the NCES config with the embedding report."""
-#    for condition, payload in embedding_report.items():
-#        if "embeddings_path" in payload:
-#            config.nces.embedding_paths[condition] = payload["embeddings_path"]
-#        else:
-#            logger.warning(
-#                "Embedding report for condition %s does not contain embeddings_path",
-#                condition,
-#            )
-
 
 def _avg(values: Sequence[float]) -> float:
     return sum(values) / len(values) if values else 0.0
