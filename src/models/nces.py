@@ -135,7 +135,6 @@ def train_nces(
             storage_path=str(trained_models_dir),
             record_runtime=True,
         )  
-        _move_upstream_artifacts(trained_models_dir)
     except TypeError as error:
         if "state_dict to be dict-like" not in str(error):
             raise
@@ -165,7 +164,7 @@ def _save_final_weights(model, trained_models_dir: Path, settings: NCESSettings)
     import torch
 
     models_dir = trained_models_dir
-    #models_dir.mkdir(parents=True, exist_ok=True)
+    models_dir.mkdir(parents=True, exist_ok=True)
 
     learners = model.model if isinstance(model.model, dict) else {settings.learner_name: model.model}
     for learner_name, module in learners.items():
@@ -182,6 +181,7 @@ def _save_final_weights(model, trained_models_dir: Path, settings: NCESSettings)
                 "max_length": model.max_length,
                 "proj_dim": model.proj_dim,
                 "num_heads": model.num_heads,
+                "num_seeds": model.num_seeds,
                 "rnn_n_layers": model.rnn_n_layers,
             },
             handle,
@@ -305,13 +305,6 @@ def evaluate_nces(
                     "negative": len(negative_extension),
                     "total": len(all_individuals),
                 },
-                #"target_extension_overlap": {
-                #    "intersection": metrics.intersection,
-                #    "union": metrics.union,
-                #    "jaccard": metrics.jaccard,
-                #    "precision": metrics.precision,
-                #    "recall": metrics.recall,
-                #},
                 "runtime_seconds": round(runtime, 3),
                 **metrics.to_dict(),
                 "lift": compute_lift(complexity=problem.complexity, f1=metrics.f1),
@@ -334,15 +327,6 @@ def evaluate_nces(
 def _mean(records: list[dict[str, Any]], key: str) -> float:
     values = [float(record.get(key, 0.0)) for record in records]
     return sum(values) / len(values) if values else 0.0
-
-def _move_upstream_artifacts(trained_models_dir: Path) -> None:
-    """Flatten NCESTrainer's <dir>/trained_models/ into <dir>/."""
-    nested = trained_models_dir / "trained_models"
-    if not nested.is_dir():
-        return
-    for artifact in nested.iterdir():
-        artifact.replace(trained_models_dir / artifact.name)
-    nested.rmdir()
 
 def _fingerprint(net) -> float:
     return sum(float(p.detach().abs().sum()) for p in net.parameters())
