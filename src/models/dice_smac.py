@@ -190,7 +190,10 @@ def run_smac_search(
     configspace = build_configuration_space(settings, seed=seed)
 
     consecutive = {"unscored": 0}
-
+    # SMAC swallows target-function exceptions and records them as crashed
+    # trials, so the abort has to be latched here and re-raised after
+    # optimize() returns.
+    aborted: dict[str, str | None] = {"reason": None}
     def _record_unscored(record: dict[str, Any]) -> float:
         record["cost"] = CRASH_COST
         trials.append(record)
@@ -198,10 +201,15 @@ def run_smac_search(
         if consecutive["unscored"] >= MAX_CONSECUTIVE_UNSCORED:
             # Abort rather than let SMAC spend the remaining budget: a
             # systematic misconfiguration cannot be escaped by resampling.
-            raise SearchAborted(_diagnose_total_failure(trials))
+            aborted["reason"] = _diagnose_total_failure(trials)
         return CRASH_COST
     
     def target_function(config: Configuration, seed: int = 0) -> float:
+        if aborted["reason"] is not None:
+            # Budget cannot be cancelled mid-run; make the remaining trials
+            # free instead of training on a known-broken dataset.
+            # Leads to funky 62 NOPs
+            return CRASH_COST
         index = counter["index"]
         counter["index"] += 1
 
@@ -226,8 +234,6 @@ def run_smac_search(
         except Exception as error:  # noqa: BLE001 - one trial must not kill the run
             logger.warning("SMAC trial %d failed: %s", index, error)
             record["error"] = str(error)
-            record["cost"] = CRASH_COST
-            trials.append(record)
             return _record_unscored(record)
 
         score, validation_error = score_fn(report)
@@ -242,8 +248,6 @@ def run_smac_search(
         if score is None or not math.isfinite(score):
             # No usable selection metric: treat as a crash so SMAC keeps
             # exploring instead of converging on an unscorable region.
-            record["cost"] = CRASH_COST
-            trials.append(record)
             return _record_unscored(record)
         consecutive["unscored"] = 0
         cost = 1.0 - float(score)
@@ -273,6 +277,9 @@ def run_smac_search(
         # Evaluate the configured defaults first so the search can never do
         # worse than the hand-tuned configuration.
         "use_default_config": True,
+        # Without this, SMAC's default crash cost is np.inf, which the
+        # random-forest surrogate cannot fit ("Input y contains NaN").
+        "crash_cost": CRASH_COST,
     }
     if settings.walltime_limit is not None:
         scenario_kwargs["walltime_limit"] = settings.walltime_limit
@@ -309,10 +316,15 @@ def run_smac_search(
     except SearchAborted:
         raise
     except Exception as error:
-        # SMAC wraps target-function exceptions when n_workers > 1.
+        if aborted["reason"] is not None:
+            raise SearchAborted(aborted["reason"]) from error
         if any(isinstance(e, SearchAborted) for e in _exception_chain(error)):
             raise SearchAborted(_diagnose_total_failure(trials)) from error
         raise
+
+    if aborted["reason"] is not None:
+        raise SearchAborted(aborted["reason"])
+    
     if isinstance(incumbent, list):  # multi-objective safety net
         incumbent = incumbent[0]
 
@@ -325,11 +337,8 @@ def run_smac_search(
             entry for entry in evaluated.values() if entry["cost"] < CRASH_COST
         ]
         if not successful:
-            raise RuntimeError(_diagnose_total_failure(trials))
+            raise SearchAborted(_diagnose_total_failure(trials))
         best = min(successful, key=lambda entry: entry["cost"])
-
-    # useful?
-    consecutive["unscored"] = 0
 
     logger.info(
         "SMAC selected dim=%d batch=%d lr=%.4g (cost=%.4f, MRR=%.4f)",

@@ -7,12 +7,14 @@ training, torch, or knowledge base is required.
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from src.config import EmbeddingSearchSpace, EmbeddingSettings
+from src.models.dice import MRRNotFound
 from src.models.dice_smac import (
     CRASH_COST,
     MAX_CONSECUTIVE_UNSCORED,
@@ -62,11 +64,11 @@ def _selection_score(report: dict[str, Any]) -> tuple[float | None, str | None]:
             return float(section["MRR"]), None
     test = report.get("Test")
     if isinstance(test, dict) and "MRR" in test:
-        return float(test["MRR"]), "Validation MRR unavailable; used test MRR."
+        return float(test["MRR"]), MRRNotFound.ValidationUnavailable.value
     train = report.get("Train")
     if isinstance(train, dict) and "MRR" in train:
-        return None, "Only train MRR was available; refusing to select on it"
-    return None, "No MRR metric was reported by DICE."
+        return None, MRRNotFound.TrainOnly.value
+    return None, MRRNotFound.NoMRR.value
 
 
 # --------------------------------------------------------------------------
@@ -296,15 +298,13 @@ def test_test_mrr_fallback_is_scored_and_flagged(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_train_only_reports_abort_with_the_split_misrouting_diagnosis(
-    tmp_path: Path,
-) -> None:
+def test_train_only_reports_abort_with_the_split_misrouting_diagnosis() -> None:
     """Reproduces the reported failure: dicee reported only a train MRR.
 
     This is the dicee ReadFromDisk substring-routing bug, and the message
     must say so instead of just pointing at search_trials.
     """
-
+    tmp_path = Path(tempfile.mkdtemp())
     def train_fn(
         dataset_dir: Path, run_dir: Path, settings: EmbeddingSettings
     ) -> dict[str, Any]:

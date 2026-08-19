@@ -8,6 +8,7 @@ import logging
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,15 @@ from src.data.ontology import Triple, local_name, parse_triples
 
 logger = logging.getLogger(__name__)
 
+class MRRNotFound(Enum):
+        ValidationUnavailable = "Validation MRR unavailable. used test MRR."
+        TrainOnly = (
+            "Only train MRR was available; refusing to select on it "
+            "(train MRR rewards memorization). Check that valid.txt/"
+            "test.txt are discovered by dicee and that eval_model="
+            "'train_val_test' took effect."
+        )
+        NoMRR = "No MRR metric was reported by DICE."
 
 @dataclass
 class EmbeddingResult:
@@ -196,18 +206,13 @@ def _selection_score(report: dict[str, Any]) -> tuple[float | None, str | None]:
 
     test = report.get("Test")
     if isinstance(test, dict) and "MRR" in test:
-        return float(test["MRR"]), "Validation MRR unavailable; used test MRR."
-
+        return float(test["MRR"]), MRRNotFound.ValidationUnavailable.value
     train = report.get("Train")
-    if isinstance(train, dict) and "MRR" in train:
-        return None, (
-            "Only train MRR was available; refusing to select on it "
-            "(train MRR rewards memorization). Check that valid.txt/"
-            "test.txt are discovered by dicee and that eval_model="
-            "'train_val_test' took effect."
-        )
 
-    return None, "No MRR metric was reported by DICE."
+    if isinstance(train, dict) and "MRR" in train:
+        return None, MRRNotFound.TrainOnly.value
+    
+    return None, MRRNotFound.NoMRR.value
 
 def search_best_embedding_setting(
     dataset_dir: Path,
