@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 def update_false_dir_names(output_dir_name: str) -> str:
     tmp_name = output_dir_name
-    return tmp_name.replace("train", "trian").replace("valid", "vaild").replace("test", "tset")
+    return tmp_name.replace("train", "_trn_").replace("valid", "_vld_").replace("test", "_tst_")
 
 PROJECT_ROOT = Path(update_false_dir_names(str(Path(__file__).resolve().parent.parent)))
 DATASETS_DIR = PROJECT_ROOT / "datasets"
