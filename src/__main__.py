@@ -114,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
         embedding = replace(embedding, model_name=args.embedding_model)
     if args.dice_epochs:
         embedding = replace(embedding, epochs=args.dice_epochs)
+    if args.hpo_backend:
+        embedding = replace(embedding, hpo_backend=args.hpo_backend)
 
     nces = config.nces
     if args.nces_epochs:
