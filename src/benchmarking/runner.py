@@ -52,8 +52,15 @@ def run_single(
     benchmark_name: str,
 ) -> dict[str, Any]:
     """Execute one benchmark run: one (knowledge base, seed) pair."""
-    # ... Stage 1: ontology parsing ...
-    logger.info("\n----- Reached Stage 1 -----\n")
+    logger.info(
+        """
+        \n
+        ---------------------------------------------------------
+        |           Reached Stage 1: Ontology parsing           |
+        ---------------------------------------------------------
+        \n
+        """
+    )
     kb_path = resolve_knowledge_base(knowledge_base_name)
     paths = run_paths(
         benchmark_name,
@@ -68,9 +75,15 @@ def run_single(
         knowledge_base = load_knowledge_base(kb_path)
         all_individuals = individual_iris(knowledge_base)
         triples = parse_triples(kb_path)
-
-        # --- Stage 2: learning-problem generation -------------------------------
-        logger.info("\n----- Reached Stage 2 -----\n")
+        logger.info(
+            """
+            \n
+            --------------------------------------------------------------------
+            |           Reached Stage 2: Learning-problem generation           |
+            --------------------------------------------------------------------
+            \n
+            """
+        )
         problems = generate_learning_problems(
             kb_path,
             paths.nces_data_dir,
@@ -81,9 +94,15 @@ def run_single(
             raise RuntimeError(
                 f"No non-degenerate learning problems generated for {knowledge_base_name}."
             )
-
-        # --- Stage 3: hardness annotation --------------------------------------
-        logger.info("\n----- Reached Stage 3 -----\n")
+        logger.info(
+            """
+            \n
+            --------------------------------------------------------------------
+            |              Reached Stage 3: Hardness annotation                |
+            --------------------------------------------------------------------
+            \n
+            """
+        )
         # Knowledge base only. No embedding-derived quantity may enter here, or
         # the benchmark's independent variable is contaminated.
         logger.info("Annotating hardness for %d learning problems", len(problems))
@@ -130,9 +149,15 @@ def run_single(
 
         _log_complexity_distribution(problems)
         save_learning_problems(problems, paths.nces_data_dir / "learning_problems.json")
-
-        # --- Stage 4: learning-problem splitting -------------------------------
-        logger.info("\n----- Reached Stage 4 -----\n")
+        logger.info(
+            """
+            \n
+            -------------------------------------------------------------------
+            |           Reached Stage 4: Learning-problem splitting           |
+            -------------------------------------------------------------------
+            \n
+            """
+        )
         split = split_learning_problems(
             problems,
             seed=seed,
@@ -145,18 +170,30 @@ def run_single(
             len(split["train"]),
             len(split["test"]),
         )
-
-        # --- Stage 5: embedding stage ------------------------------------------
-        logger.info("\n----- Reached Stage 5 -----\n")
+        logger.info(
+            """
+            \n
+            --------------------------------------------------------
+            |           Reached Stage 5: Embedding Stage           |
+            --------------------------------------------------------
+            \n
+            """
+        )
         embedding_report = run_embedding_stage(
             paths=paths,
             kb_path=kb_path,
             benchmark_settings=config,
             seed=seed,
         )
-
-        # --- Stages 6-7: NCES training and evaluation, per condition -----------
-        logger.info("\n----- Reached Stage 6/7 -----\n")
+        logger.info(
+            """
+            \n
+            ----------------------------------------------------------------
+            |           Reached Stage 6/7: Training & Evaluation           |
+            ----------------------------------------------------------------
+            \n
+            """
+        )
         #_update_nces_config(config, embedding_report)
         train_data = prepare_nces_training_data(
             split["train"], paths.nces_data_dir / "nces_train_data.json"
@@ -166,12 +203,16 @@ def run_single(
         for condition in config.project.embedding_conditions:
             embeddings_path = embedding_report[condition].embeddings_path
             trained_models_dir = paths.trained_models_dir / condition
-
-            # TODO: Be aware that NCES requires the embeddings to have the same
-            # dimensionality as the training data. If the embedding stage
-            # produced embeddings of a different dimensionality, the
-            # training will fail.
-            logger.info("\n----- Stage 6/7: NCES started training -----\n")
+            
+            logger.info(
+                """
+                \n
+                -----------------------------------------
+                |   Stage 6/7: NCES started training    |
+                -----------------------------------------
+                \n
+                """
+            )
             try:
                 csv_dim = int(embedding_report[condition].embedding_dim) or get_csv_dimension(embeddings_path)
             except Exception as e:
@@ -185,7 +226,16 @@ def run_single(
                 settings=config.nces,
                 m=csv_dim,
             )
-            logger.info("\n----- Stage 6/7: NCES started evaluating -----\n")
+            logger.info(
+                """
+                \n
+                -----------------------------------------
+                |   Stage 6/7: NCES started evaluation  |
+                -----------------------------------------
+                \n
+                """
+            )
+            _assert_model_dir_contains_needed_files(trained_models_dir)
             evaluation = evaluate_nces(
                 kb_path=kb_path,
                 embeddings_path=Path(embeddings_path),
@@ -404,3 +454,17 @@ def _write_json(payload: dict[str, Any], path: Path) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False, default=str)
     logger.info("Wrote %s", path)
+
+def _assert_model_dir_contains_needed_files(trained_models_dir: Path) -> None:
+    """Check that the trained models directory contains the expected files."""
+    if not trained_models_dir.exists():
+        raise FileNotFoundError(f"Trained models directory does not exist: {trained_models_dir}")
+
+    expected_files = ["vocab.json", "inv_vocab.npy"]
+    missing_files = [f for f in expected_files if not (trained_models_dir / f).exists()]
+
+    if len(missing_files) > 0:
+        raise FileNotFoundError(
+            f"Trained models directory is missing expected files: {missing_files}. "
+            f"Directory contents: {list(trained_models_dir.iterdir())}"
+        )

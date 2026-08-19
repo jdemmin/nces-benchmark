@@ -24,7 +24,7 @@ def update_false_dir_names(output_dir_name: str) -> str:
 PROJECT_ROOT = Path(update_false_dir_names(str(Path(__file__).resolve().parent.parent)))
 DATASETS_DIR = PROJECT_ROOT / "datasets"
 INPUT_DIR = PROJECT_ROOT / "input"
-OUTPUT_DIR = PROJECT_ROOT / "Output"
+OUTPUT_DIR = PROJECT_ROOT / "output"
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,7 @@ class RunPaths:
 
     @property
     def trained_models_dir(self) -> Path:
-        return self.nces_dir / "trained_models"
+        return self.nces_dir / "models"
 
     @property
     def logs_dir(self) -> Path:
