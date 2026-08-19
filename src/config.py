@@ -186,6 +186,70 @@ class DataGenerationSettings:
             ),
         )
 
+#: Surrogate/HPO backends for the DICE embedding search.
+HPO_BACKENDS: tuple[str, ...] = ("smac", "grid")
+
+
+@dataclass(frozen=True)
+class EmbeddingSearchSpace:
+    """Bounds for the SMAC configuration space of the DICE search.
+
+    Only hyperparameters that DICE actually consumes are exposed. The
+    dimension is sampled on a log2 grid because multi-component models
+    (Keci, ComplEx, QMult, ...) require the stored width to stay a clean
+    multiple of the component count.
+    """
+
+    embedding_dim_choices: tuple[int, ...] = (32, 64, 128, 256)
+    batch_size_choices: tuple[int, ...] = (32, 64, 128, 256)
+    learning_rate_bounds: tuple[float, float] = (1e-3, 3e-1)
+    epochs_bounds: tuple[int, int] = (25, 100)
+    scoring_technique_choices: tuple[str, ...] = ("KvsAll", "NegSample")
+    tune_epochs: bool = False
+    tune_scoring_technique: bool = False
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> EmbeddingSearchSpace:
+        space = payload.get("search_space", {})
+        if not isinstance(space, dict):
+            raise TypeError("embedding_settings.search_space must be an object.")
+        defaults = cls()
+        return cls(
+            embedding_dim_choices=tuple(
+                int(v)
+                for v in space.get(
+                    "embedding_dim_choices", defaults.embedding_dim_choices
+                )
+            ),
+            batch_size_choices=tuple(
+                int(v)
+                for v in space.get(
+                    "batch_size_choices", defaults.batch_size_choices
+                )
+            ),
+            learning_rate_bounds=tuple(  # type: ignore[arg-type]
+                float(v)
+                for v in space.get(
+                    "learning_rate_bounds", defaults.learning_rate_bounds
+                )
+            ),
+            epochs_bounds=tuple(  # type: ignore[arg-type]
+                int(v) for v in space.get("epochs_bounds", defaults.epochs_bounds)
+            ),
+            scoring_technique_choices=tuple(
+                str(v)
+                for v in space.get(
+                    "scoring_technique_choices",
+                    defaults.scoring_technique_choices,
+                )
+            ),
+            tune_epochs=bool(space.get("tune_epochs", defaults.tune_epochs)),
+            tune_scoring_technique=bool(
+                space.get(
+                    "tune_scoring_technique", defaults.tune_scoring_technique
+                )
+            ),
+        )
 
 @dataclass(frozen=True)
 class EmbeddingSettings:
@@ -201,17 +265,35 @@ class EmbeddingSettings:
     num_core: int = 0
     learning_rate: float = 0.1
 
+    # --- hyperparameter search ------------------------------------------
+    hpo_backend: str = "smac"
+    n_trials: int = 16
+    walltime_limit: float | None = None
+    trial_walltime_limit: float | None = None
+    n_workers: int = 1
+    search_space: EmbeddingSearchSpace = field(
+        default_factory=EmbeddingSearchSpace
+    )
+
     def __post_init__(self) -> None:
         if self.model_name not in DICE_MODELS:
             raise ValueError(
                 f"Unknown DICE model {self.model_name!r}. "
                 f"Choose one of {', '.join(DICE_MODELS)}."
             )
+        if self.hpo_backend not in HPO_BACKENDS:
+            raise ValueError(
+                f"Unknown hpo_backend {self.hpo_backend!r}. "
+                f"Choose one of {', '.join(HPO_BACKENDS)}."
+            )
+        if self.n_trials < 1:
+            raise ValueError(f"n_trials must be >= 1, got {self.n_trials}.")
 
     def search_grid(self) -> list[EmbeddingSettings]:
-        """Hyperparameter grid: base/doubled dimension x base/halved batch.
+        """Legacy grid: base/doubled dimension x base/halved batch.
 
-        Returns one :class:`EmbeddingSettings` per hyperparameter trial.
+        Kept as the ``hpo_backend="grid"`` fallback so a run can be
+        reproduced without SMAC installed.
         """
         dims = sorted({self.embedding_dim, self.embedding_dim * 2})
         batches = sorted({self.batch_size, max(1, self.batch_size // 2)})
@@ -221,16 +303,22 @@ class EmbeddingSettings:
             for batch in batches
         ]
 
+    def with_overrides(self, **overrides: Any) -> EmbeddingSettings:
+        """Return a copy with the SMAC-sampled values applied."""
+        return replace(self, **overrides)
+
     @classmethod
     def from_json(cls, path: Path | None = None) -> EmbeddingSettings:
         try:
             payload = _read_json(path or INPUT_DIR / "embedding_settings.json")
         except FileNotFoundError:
-                    # Provide a default embedding settings if the file is missing.
-                    logger.info(
-                        "embedding_settings.json not found. Using default embedding settings."
-                    )
-                    return cls()
+            logger.info(
+                "embedding_settings.json not found. Using default embedding "
+                "settings."
+            )
+            return cls()
+        walltime = payload.get("walltime_limit")
+        trial_walltime = payload.get("trial_walltime_limit")
         return cls(
             model_name=str(payload.get("model_name", "Keci")),
             embedding_dim=int(payload.get("embedding_dim", 64)),
@@ -241,6 +329,14 @@ class EmbeddingSettings:
             eval_model=str(payload.get("eval_model", "train_val_test")),
             num_core=int(payload.get("num_core", 0)),
             learning_rate=float(payload.get("learning_rate", 0.1)),
+            hpo_backend=str(payload.get("hpo_backend", "smac")),
+            n_trials=int(payload.get("n_trials", 16)),
+            walltime_limit=None if walltime is None else float(walltime),
+            trial_walltime_limit=(
+                None if trial_walltime is None else float(trial_walltime)
+            ),
+            n_workers=int(payload.get("n_workers", 1)),
+            search_space=EmbeddingSearchSpace.from_payload(payload),
         )
         
 

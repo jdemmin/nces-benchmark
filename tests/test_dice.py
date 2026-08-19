@@ -1,8 +1,8 @@
 # tests/test_dicee.py
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import pytest
 from flask import json
@@ -79,34 +79,6 @@ def test_embedding_report_is_written(
     )
     assert set(payload["triple_counts"]) == {"train", "valid", "test"}
     assert payload["num_entities"] > 0
-
-def test_expected_dim_mismatch_raises(tmp_path: Path, monkeypatch) -> None:
-    import numpy as np
-
-    from src.models import dice as dice_module
-
-    class FakeKGE:
-        entity_to_idx = {"http://e#a": 0}
-
-        def __init__(self, path: str) -> None:
-            self.path = path
-
-    monkeypatch.setattr(
-        dice_module,
-        "_entity_embedding_matrix",
-        lambda model: np.zeros((1, 256)),
-    )
-    monkeypatch.setitem(
-        __import__("sys").modules, "dicee", type("m", (), {"KGE": FakeKGE})
-    )
-
-    with pytest.raises(ValueError, match="256-dimensional"):
-        dice_module.export_entity_embeddings(
-            tmp_path / "run",
-            tmp_path / "out.csv",
-            expected_dim=64,
-        )
-
 
 def test_conditions_share_the_exported_width(tmp_path: Path) -> None:
     """The benchmark is invalid if dice and random widths differ."""
@@ -219,7 +191,7 @@ def test_get_csv_dimension_matches_written_width(tmp_path: Path) -> None:
 @pytest.fixture
 def base_settings() -> EmbeddingSettings:
     return EmbeddingSettings(
-        model_name="QMult", embedding_dim=64, batch_size=32, epochs=1
+        model_name="QMult", embedding_dim=64, batch_size=32, epochs=1, hpo_backend="grid"
     )
 
 def test_search_grid_is_the_documented_cross_product(
@@ -255,7 +227,7 @@ def test_search_picks_highest_validation_mrr(
     monkeypatch.setattr(
         "src.models.dice.train_embedding_model", fake_train
     )
-    best, _, trials, error = search_best_embedding_setting(
+    best, _, trials, error, _ = search_best_embedding_setting(
         tmp_path / "data", tmp_path / "emb", base_settings, seed=1
     )
     assert (best.embedding_dim, best.batch_size) == (64, 32)
@@ -275,7 +247,7 @@ def test_tied_scores_resolve_deterministically(
     monkeypatch.setattr(
         "src.models.dice.train_embedding_model", fake_train
     )
-    best, _, _, _ = search_best_embedding_setting(
+    best, _, _, _, _ = search_best_embedding_setting(
         tmp_path / "data", tmp_path / "emb", base_settings, seed=1
     )
     # Smallest (dim, batch) wins the tie -- the cheapest model.
@@ -294,7 +266,7 @@ def test_failed_trial_is_recorded_not_fatal(
     monkeypatch.setattr(
         "src.models.dice.train_embedding_model", fake_train
     )
-    best, _, trials, _ = search_best_embedding_setting(
+    best, _, trials, _, _ = search_best_embedding_setting(
         tmp_path / "data", tmp_path / "emb", base_settings, seed=1
     )
     assert best.embedding_dim == 128

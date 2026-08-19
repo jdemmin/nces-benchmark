@@ -63,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="DICE architecture; overrides embedding_settings.json.",
     )
     parser.add_argument(
+        "--hpo-backend",
+        choices=["smac", "grid"],
+        default=None,
+        help="Hyperparameter optimization backend for DICE embeddings.",
+    )
+    parser.add_argument(
         "--num-problems",
         type=int,
         default=None,

@@ -242,16 +242,32 @@ and `max_child_len → max_child_length`. All translation lives in
   "model_name": "Keci",
   "embedding_dim": 64,
   "epochs": 50,
-  "batch_size": 64
+  "batch_size": 64,
+  "learning_rate": 0.1,
+  "scoring_technique": "KvsAll",
+  "trainer": "torchCPUTrainer",
+  "eval_model": "train_val_test",
+  "hpo_backend": "smac",
+  "n_trials": 16,
+  "trial_walltime_limit": 1800,
+  "n_workers": 1,
+  "search_space": {
+    "embedding_dim_choices": [32, 64, 128, 256],
+    "batch_size_choices": [32, 64, 128, 256],
+    "learning_rate_bounds": [0.001, 0.3],
+    "epochs_bounds": [25, 100],
+    "tune_epochs": false,
+    "tune_scoring_technique": false
+  }
 }
 ```
 
 `model_name` is one of `Decal`, `Keci`, `DualE`, `ComplEx`, `QMult`, `OMult`,
 `ConvQ`, `ConvO`, `ConEx`, `TransE`, `DistMult`, `Shallom`.
 
-The values above seed a four-point hyperparameter grid — {base, doubled}
-dimension × {base, halved} batch size — scored by validation MRR with a
-fallback to test MRR. A trial that raises is recorded in `search_trials` and
+The `search_space` values above fuel a random forest hyper parameter
+optimisation via the [SMAC framework](https://github.com/automl/SMAC3).
+A trial that raises is recorded in `search_trials` and
 skipped rather than aborting the run.
 
 ### `nces_settings.json`

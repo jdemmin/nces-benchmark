@@ -13,3 +13,8 @@
 # Embeddings
 
 - is grid search the way to go?
+- Test that all embeddings can run through on a smoke test
+
+# Git
+
+- fix pipeline...

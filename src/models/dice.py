@@ -209,8 +209,59 @@ def _selection_score(report: dict[str, Any]) -> tuple[float | None, str | None]:
 
     return None, "No MRR metric was reported by DICE."
 
-
 def search_best_embedding_setting(
+    dataset_dir: Path,
+    embeddings_dir: Path,
+    settings: EmbeddingSettings,
+    *,
+    seed: int,
+) -> tuple[
+    EmbeddingSettings, dict[str, Any], list[dict[str, Any]], str | None, Path
+]:
+    """Optimize the DICE hyperparameters and return the best trial.
+
+    Returns ``(best_settings, best_report, trials, validation_error,
+    best_run_dir)``. The backend is selected by
+    ``embedding.hpo_backend``: ``"smac"`` runs SMAC3's
+    ``HyperparameterOptimizationFacade`` (random forest surrogate), while
+    ``"grid"`` keeps the original exhaustive grid so results predating the
+    switch stay reproducible.
+    """
+    if settings.hpo_backend == "smac":
+        from src.models.dice_smac import run_smac_search
+
+        outcome = run_smac_search(
+            dataset_dir,
+            embeddings_dir,
+            settings,
+            seed=seed,
+            train_fn=lambda data_dir, run_dir, trial_settings: (
+                train_embedding_model(
+                    data_dir, run_dir, trial_settings, seed=seed
+                )
+            ),
+            score_fn=_selection_score,
+        )
+        return (
+            outcome.best_settings,
+            outcome.best_report,
+            outcome.trials,
+            outcome.validation_error,
+            outcome.best_run_dir,
+        )
+
+    best_settings, best_report, trials, validation_error = _legacy_grid_search(
+        dataset_dir, embeddings_dir, settings, seed=seed
+    )
+    return (
+        best_settings,
+        best_report,
+        trials,
+        validation_error,
+        _best_trial_run_dir(trials, best_settings),
+    )
+
+def _legacy_grid_search(
     dataset_dir: Path,
     embeddings_dir: Path,
     settings: EmbeddingSettings,
@@ -413,11 +464,10 @@ def build_embeddings(
     chosen = embedding_settings
 
     if "dice" in embedding_conditions:
-        best, report, trials, validation_error = search_best_embedding_setting(
+        best, report, trials, validation_error, run_dir = search_best_embedding_setting(
             data_dir, embeddings_dir, embedding_settings, seed=seed
         )
         chosen = best
-        run_dir = _best_trial_run_dir(trials, best)
         output_path = embeddings_dir / f"{best.model_name}.csv"
         export_entity_embeddings(run_dir, output_path, expected_dim=expected_dim)
         score, _ = _selection_score(report)
