@@ -169,7 +169,7 @@ class DataGenerationSettings:
 
         expressivity = float(payload.get("refinement_expressivity", 0.2))
         return cls(
-            kbs=str(payload.get("kbs", "father")),
+            kbs=str(payload.get("kbs", "semantic_bible")),
             num_rand_samples=int(payload.get("num_rand_samples", 150)),
             depth=int(payload.get("depth", 2)),
             max_child_len=int(payload.get("max_child_len", 10)),
