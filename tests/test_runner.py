@@ -129,7 +129,7 @@ def test_run_single_produces_report(
     )
     # run_single does not create the report file itself,
     # but the benchmark runner does, so we check that at least the report exists.
-    report = runner.run_single("father", 1, config, output_dir=tmp_path)
+    report = runner.run_single("father", 1, config, output_dir=tmp_path, benchmark_name="benchmark1")
 
     assert report["seed"] == 1
     assert set(report["embedding_conditions"]) == {"dice", "random"}

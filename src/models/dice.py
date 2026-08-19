@@ -347,7 +347,7 @@ def search_best_embedding_setting(
             dataset_dir, embeddings_dir, settings, seed=seed
         )
     return (
-        outcome.best_settings,
+        EmbeddingSettings(outcome.best_settings),
         outcome.best_report,
         outcome.trials,
         outcome.validation_error,
@@ -481,9 +481,9 @@ def build_embeddings(
             model_name=best.model_name,
             embeddings_path=output_path,
             embedding_condition="dice",
-            embedding_dim=int(best.embedding_dim),
-            batch_size=int(best.batch_size),
-            score=float(score) if score is not None else None,
+            embedding_dim=best.embedding_dim,
+            batch_size=best.batch_size,
+            score=score,
             metrics={
                 section: report[section]
                 for section in ("Train", "Val", "Valid", "Test")

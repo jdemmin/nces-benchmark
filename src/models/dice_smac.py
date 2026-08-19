@@ -198,6 +198,7 @@ def run_smac_search(
     aborted: dict[str, str | None] = {"reason": None}
     def _record_unscored(record: dict[str, Any]) -> float:
         record["cost"] = CRASH_COST
+        _write_trial_record(embeddings_dir, record["trial"], record)
         trials.append(record)
         consecutive["unscored"] += 1
         if consecutive["unscored"] >= MAX_CONSECUTIVE_UNSCORED:
@@ -341,6 +342,9 @@ def run_smac_search(
     if isinstance(incumbent, list):  # multi-objective safety net
         incumbent = incumbent[0]
 
+    # Recover the trial records from disk, because SMAC's runhistory is not
+    # process-safe and may have been lost if the target function ran in a
+    # subprocess (n_workers > 1 or trial_walltime_limit forcing pynisher).
     trials = _load_trial_records(embeddings_dir)
     if not trials:
         # Nothing reached our closures. Either the target function ran in
@@ -386,16 +390,20 @@ def run_smac_search(
         best["cost"],
         1.0 - best["cost"],
     )
-
-    #embedding_settings = settings_from_configuration(settings, best["config"])
-
+    tmp_settings = settings
+    tmp_settings = tmp_settings.with_overrides(
+        embedding_dim=int(best["embedding_dim"]),
+        batch_size=int(best["batch_size"]),
+        epochs=int(best["epochs"]),
+        learning_rate=float(best["learning_rate"]),
+    )
     return SmacSearchOutcome(
-        best_settings=EmbeddingSettings(**best["config"]),
+        best_settings=tmp_settings,
         best_report=best["metrics"],
-        best_run_dir=best["run_dir"],
+        best_run_dir=Path(best["run_dir"]),
         trials=trials,
         validation_error=best["validation_error"],
-        incumbent_cost=best["cost"],
+        incumbent_cost=float(best["cost"]),
     )
 
 #: Above this, a "limit" is a sentinel meaning "no limit" and must not be

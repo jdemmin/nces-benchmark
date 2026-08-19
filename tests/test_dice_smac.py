@@ -228,7 +228,7 @@ def test_search_is_reproducible_for_a_fixed_seed(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_a_crashing_trial_does_not_abort_the_search(tmp_path: Path) -> None:
+def test_a_crashing_trial_does_not_abort_the_search() -> None:
     def train_fn(
         dataset_dir: Path, run_dir: Path, settings: EmbeddingSettings
     ) -> dict[str, Any]:
@@ -236,6 +236,7 @@ def test_a_crashing_trial_does_not_abort_the_search(tmp_path: Path) -> None:
             raise RuntimeError("CUDA out of memory")
         return _mrr_report(0.4)
 
+    tmp_path = Path(tempfile.mkdtemp())
     outcome = run_smac_search(
         tmp_path / "kg",
         tmp_path / "emb",
