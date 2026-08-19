@@ -347,7 +347,7 @@ def search_best_embedding_setting(
             dataset_dir, embeddings_dir, settings, seed=seed
         )
     return (
-        EmbeddingSettings(outcome.best_settings),
+        outcome.best_settings,
         outcome.best_report,
         outcome.trials,
         outcome.validation_error,
