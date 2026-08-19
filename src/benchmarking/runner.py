@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import tempfile
 import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from src.config import BenchmarkConfiguration
+from src.config import BenchmarkConfiguration, ProjectSettings
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
     LearningProblem,
@@ -254,6 +255,7 @@ def run_benchmark(
     seeds: Sequence[int] | None = None,
     output_dir: Path | None = None,
 ) -> dict[str, Any]:
+    _order_embedding_conditions(config.project.embedding_conditions)
     """Run every (knowledge base, seed) combination and aggregate results."""
     if (config.project.embedding_conditions)[0] == "random" and not config.project.embedding_conditions[1:]:
         logger.warning(
@@ -313,6 +315,20 @@ def run_benchmark(
     _write_json(summary, benchmark_dir / "benchmark_summary.json")
     return summary
 
+def _order_embedding_conditions(embedding_conditions: list[str]) -> None:
+    """Ensure that 'random' is always the last embedding condition."""
+    if "random" == embedding_conditions[0] and len(embedding_conditions) > 1:
+        embedding_conditions.remove("random")
+        embedding_conditions.append("random")
+        logger.warning(
+                    "Random embedding condition must follow after dice embedding" \
+                    "conditions. Otherwise, this can lead to a situation where" \
+                    "random and the dice embedding differ in dimensionality,"
+                )
+        logger.info(
+            "Your error has been corrected. The embedding conditions have been reordered to ensure 'random' is last."
+        )
+
 def run_embedding_stage(
         paths: RunPaths,
         kb_path: Path,
@@ -324,18 +340,15 @@ def run_embedding_stage(
     Creates a temporary data directory to avoid triggering dicee path checks.
     Copies the embeddings to the run's embeddings directory so nothing is lost.
     """
-    temp_data_dir = Path(tempfile.mkdtemp())  # otherwise test prefix would trigger dicee path check
     report = build_embeddings(
             kb_path=kb_path,
             embeddings_dir=paths.embeddings_dir,
-            data_dir=temp_data_dir,
+            data_dir=paths.embeddings_data_dir,
             embedding_settings=benchmark_settings.embedding,
             seed=seed,
             embedding_conditions=benchmark_settings.project.embedding_conditions,
             expected_dim=benchmark_settings.nces.embedding_dim
         )
-    new_data_dir = report[next(iter(report.keys()))].embeddings_path.parent / "data"
-    paths.embeddings_data_dir.replace(new_data_dir)
     return report
 
 def _summarise(kb_name: str, reports: Sequence[dict[str, Any]]) -> dict[str, Any]:
