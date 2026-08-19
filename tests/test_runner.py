@@ -127,6 +127,11 @@ def test_run_single_produces_report(
             "complexity_summary": {},
         },
     )
+    monkeypatch.setattr(
+        runner, 
+        "_assert_model_dir_contains_needed_files", 
+        lambda *a, **k: None
+    )
     # run_single does not create the report file itself,
     # but the benchmark runner does, so we check that at least the report exists.
     report = runner.run_single("father", 1, config, output_dir=tmp_path, benchmark_name="benchmark1")
