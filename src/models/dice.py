@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class GridSearchOutcome:
     best_settings: EmbeddingSettings
     best_report: dict[str, Any]
-    search_trials: list[dict[str, Any]]
+    trials: list[dict[str, Any]]
     validation_error: str | None
     best_run_dir: Path | None
 
@@ -95,7 +95,7 @@ def grid_search(
     return GridSearchOutcome(
         best_settings=best_settings,
         best_report=best_report,
-        search_trials=trials,
+        trials=trials,
         validation_error=best_validation_error,
         best_run_dir=_best_trial_run_dir(trials, best_settings),
     )
@@ -349,7 +349,7 @@ def search_best_embedding_setting(
     return (
         outcome.best_settings,
         outcome.best_report,
-        outcome.search_trials,
+        outcome.trials,
         outcome.validation_error,
         outcome.best_run_dir,
     )
@@ -481,9 +481,9 @@ def build_embeddings(
             model_name=best.model_name,
             embeddings_path=output_path,
             embedding_condition="dice",
-            embedding_dim=best.embedding_dim,
-            batch_size=best.batch_size,
-            score=score,
+            embedding_dim=int(best.embedding_dim),
+            batch_size=int(best.batch_size),
+            score=float(score) if score is not None else None,
             metrics={
                 section: report[section]
                 for section in ("Train", "Val", "Valid", "Test")

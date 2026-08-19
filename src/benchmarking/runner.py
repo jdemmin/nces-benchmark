@@ -5,14 +5,12 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
-import tempfile
 import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from src.config import BenchmarkConfiguration, ProjectSettings
+from src.config import BenchmarkConfiguration
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
     LearningProblem,
@@ -35,7 +33,13 @@ from src.models.nces import (
     prepare_nces_training_data,
     train_nces,
 )
-from src.paths import OUTPUT_DIR, RunPaths, resolve_knowledge_base, run_paths, update_false_dir_names
+from src.paths import (
+    OUTPUT_DIR,
+    RunPaths,
+    resolve_knowledge_base,
+    run_paths,
+    update_false_dir_names,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +173,7 @@ def run_single(
             # training will fail.
             logger.info("\n----- Stage 6/7: NCES started training -----\n")
             try:
-                csv_dim = embedding_report[condition].embedding_dim or get_csv_dimension(embeddings_path)
+                csv_dim = int(embedding_report[condition].embedding_dim) or get_csv_dimension(embeddings_path)
             except Exception as e:
                 logger.error("Failed to get CSV dimension: %s", e)
                 raise
@@ -256,8 +260,8 @@ def run_benchmark(
     seeds: Sequence[int] | None = None,
     output_dir: Path | None = None,
 ) -> dict[str, Any]:
-    _order_embedding_conditions(config.project.embedding_conditions)
     """Run every (knowledge base, seed) combination and aggregate results."""
+    _order_embedding_conditions(config.project.embedding_conditions)
     if (config.project.embedding_conditions)[0] == "random" and not config.project.embedding_conditions[1:]:
         logger.warning(
             "Random embeddings must follow after other embedding conditions." \
@@ -297,10 +301,10 @@ def run_benchmark(
             # write unaggregated reports
             for i in range(len(kb_reports)):
                 if output_dir != None:
-                    _write_json(path= benchmark_dir / "kb_reports" / f"kb_report_{i}.json", payload=kb_reports[i])
+                    _write_json(path=benchmark_dir / "kb_reports" / f"kb_report_{i}.json", payload=kb_reports[i])
             _write_json(
-                _summarise(kb_name, kb_reports),
-                benchmark_dir / f"{kb_name}_summary.json",
+                payload=_summarise(kb_name, kb_reports),
+                path=benchmark_dir / f"{kb_name}_summary.json",
             )
 
     summary = {
@@ -318,7 +322,7 @@ def run_benchmark(
             if any(r["knowledge_base"] == kb for r in reports)
         },
     }
-    _write_json(summary, benchmark_dir / "benchmark_summary.json")
+    _write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
     return summary
 
 def _order_embedding_conditions(embedding_conditions: list[str]) -> None:

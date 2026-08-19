@@ -15,6 +15,8 @@ random forest learn that the region is unusable.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
 from collections.abc import Callable
@@ -184,7 +186,7 @@ def run_smac_search(
     trials: list[dict[str, Any]] = []
     # Keyed by the ConfigSpace repr so the incumbent can be mapped back to
     # its run directory and report without retraining.
-    evaluated: dict[str, dict[str, Any]] = {}
+    evaluated: dict[tuple[tuple[str, Any], ...], dict[str, Any]] = {}
     counter = {"index": 0}
 
     configspace = build_configuration_space(settings, seed=seed)
@@ -214,10 +216,7 @@ def run_smac_search(
         counter["index"] += 1
 
         trial_settings = settings_from_configuration(settings, config)
-        run_dir = (
-            embeddings_dir
-            / f"trial_{index:02d}_{trial_settings.model_name}"
-        )
+        run_dir = (_run_dir_for(embeddings_dir, trial_settings, config))
         record: dict[str, Any] = {
             "trial": index,
             "model_name": trial_settings.model_name,
@@ -252,16 +251,10 @@ def run_smac_search(
         consecutive["unscored"] = 0
         cost = 1.0 - float(score)
         record["cost"] = cost
-        trials.append(record)
-        evaluated[str(config)] = {
-            "settings": trial_settings,
-            "report": report,
-            "run_dir": run_dir,
-            "validation_error": validation_error,
-            "cost": cost,
-        }
+        record["config"] = dict(config)
+        _write_trial_record(embeddings_dir, index, record)
         return cost
-
+    
     scenario_kwargs: dict[str, Any] = {
         "configspace": configspace,
         "name": f"dice_{settings.model_name}_seed{seed}",
@@ -273,7 +266,6 @@ def run_smac_search(
         "deterministic": True,
         "n_trials": settings.n_trials,
         "seed": seed,
-        "n_workers": settings.n_workers,
         # Evaluate the configured defaults first so the search can never do
         # worse than the hand-tuned configuration.
         "use_default_config": True,
@@ -281,9 +273,30 @@ def run_smac_search(
         # random-forest surrogate cannot fit ("Input y contains NaN").
         "crash_cost": CRASH_COST,
     }
+    # if settings.n_workers > 1, SMAC will spawn a Dask cluster and pickle the
+    # target function into each worker. That breaks the trial bookkeeping in
+    # the closure cells, so we reject it here and force n_workers=1.
+    try:
+        _assert_single_worker(settings)
+    except ValueError as error:
+        logger.warning(error)
+    scenario_kwargs.setdefault("n_workers", 1)
+
     if settings.walltime_limit is not None:
         scenario_kwargs["walltime_limit"] = settings.walltime_limit
-    if settings.trial_walltime_limit is not None:
+    # Setting trial_walltime_limit AT ALL makes SMAC run each trial through
+    # pynisher, i.e. in a forked subprocess -- the magnitude of the limit is
+    # irrelevant. The fork copies this function's closure cells (`trials`,
+    # `evaluated`, `counter`, `aborted`), so every record written by a trial
+    # is discarded when the child exits and only the float cost returns.
+    # Never set it unless a real limit is wanted.
+    if _is_real_walltime_limit(settings.trial_walltime_limit):
+        logger.warning(
+            "trial_walltime_limit=%s forces SMAC to run trials in a pynisher "
+            "subprocess; per-trial records and run_dir paths will not be "
+            "recoverable from the parent process.",
+            settings.trial_walltime_limit,
+        )
         scenario_kwargs["trial_walltime_limit"] = settings.trial_walltime_limit
 
     scenario = Scenario(**scenario_kwargs)
@@ -328,7 +341,32 @@ def run_smac_search(
     if isinstance(incumbent, list):  # multi-objective safety net
         incumbent = incumbent[0]
 
-    best = evaluated.get(str(incumbent))
+    trials = _load_trial_records(embeddings_dir)
+    if not trials:
+        # Nothing reached our closures. Either the target function ran in
+        # another process (n_workers > 1, or pynisher's trial_walltime_limit
+        # subprocess) or it genuinely never ran. The runhistory distinguishes
+        # the two.
+        history = smac.runhistory
+        logger.error(
+            "SMAC recorded %d trials in its runhistory but our target "
+            "function recorded 0. Trial bookkeeping did not survive the "
+            "process boundary.",
+            len(history),
+        )
+        for trial_value in history.values():
+            logger.error(
+                "  runhistory: cost=%s status=%s time=%.1fs",
+                trial_value.cost, trial_value.status, trial_value.time,
+            )
+
+    evaluated = {
+        _config_key(r["config"]): r
+        for r in trials
+        if r.get("cost", CRASH_COST) < CRASH_COST
+    }
+    best_key = _config_key(incumbent)
+    best = evaluated.get(best_key, None)
     if best is None:
         # The incumbent was not scorable (all trials crashed, or SMAC
         # returned a config we never recorded). Fall back to the cheapest
@@ -342,21 +380,61 @@ def run_smac_search(
 
     logger.info(
         "SMAC selected dim=%d batch=%d lr=%.4g (cost=%.4f, MRR=%.4f)",
-        best["settings"].embedding_dim,
-        best["settings"].batch_size,
-        best["settings"].learning_rate,
+        best["embedding_dim"],
+        best["batch_size"],
+        best["learning_rate"],
         best["cost"],
         1.0 - best["cost"],
     )
 
+    #embedding_settings = settings_from_configuration(settings, best["config"])
+
     return SmacSearchOutcome(
-        best_settings=best["settings"],
-        best_report=best["report"],
+        best_settings=EmbeddingSettings(**best["config"]),
+        best_report=best["metrics"],
         best_run_dir=best["run_dir"],
         trials=trials,
         validation_error=best["validation_error"],
         incumbent_cost=best["cost"],
     )
+
+#: Above this, a "limit" is a sentinel meaning "no limit" and must not be
+#: forwarded to SMAC -- doing so buys a subprocess for nothing.
+_SENTINEL_WALLTIME_SECONDS: float = 30 * 24 * 3600  # 30 days
+
+def _is_real_walltime_limit(value: float | None) -> bool:
+    return value is not None and 0 < value < _SENTINEL_WALLTIME_SECONDS
+
+def _trial_record_path(embeddings_dir: Path, index: int) -> Path:
+    return embeddings_dir / "smac_trials" / f"trial_{index:04d}.json"
+
+def _write_trial_record(
+    embeddings_dir: Path, index: int, record: dict[str, Any]
+) -> None:
+    path = _trial_record_path(embeddings_dir, index)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(record, handle, indent=2, default=str)
+
+def _load_trial_records(embeddings_dir: Path) -> list[dict[str, Any]]:
+    directory = embeddings_dir / "smac_trials"
+    if not directory.is_dir():
+        return []
+    records = []
+    for path in sorted(directory.glob("trial_*.json")):
+        with path.open(encoding="utf-8") as handle:
+            records.append(json.load(handle))
+    return records
+
+def _run_dir_for(embeddings_dir: Path, settings: EmbeddingSettings,
+                 config: Configuration) -> Path:
+    digest = hashlib.sha1(
+        repr(sorted(dict(config).items())).encode()
+    ).hexdigest()[:10]
+    return embeddings_dir / f"trial_{digest}_{settings.model_name}"
+
+def _config_key(config: Configuration) -> tuple[tuple[str, Any], ...]:
+    return tuple(sorted(dict(config).items()))
 
 def _diagnose_total_failure(trials: list[dict[str, Any]]) -> str:
     """Build an actionable message for a search where no trial scored.
@@ -367,8 +445,13 @@ def _diagnose_total_failure(trials: list[dict[str, Any]]) -> str:
     """
     if not trials:
         return (
-            "SMAC ran zero trials. Check that n_trials >= 1 and that "
-            "walltime_limit is not smaller than a single training run."
+            "No trial records reached the search process. Either SMAC ran "
+            "zero trials (check n_trials >= 1 and that walltime_limit "
+            "exceeds one training run), or every trial executed in a "
+            "separate process so the in-memory trial log stayed empty "
+            "(n_workers > 1, or trial_walltime_limit forcing pynisher's "
+            "subprocess). See the runhistory dump above for actual trial "
+            "statuses."
         )
 
     crashed = [t for t in trials if "error" in t]
@@ -425,3 +508,18 @@ def _exception_chain(error: BaseException) -> list[BaseException]:
         chain.append(current)
         current = current.__cause__ or current.__context__
     return chain
+
+def _assert_single_worker(settings: EmbeddingSettings) -> None:
+    """Reject parallel SMAC: trial bookkeeping is not process-safe.
+
+    ``run_smac_search`` accumulates trial records, the run-directory counter
+    and the abort latch in closure cells. ``DaskParallelRunner`` pickles the
+    target function into worker processes, so every one of those mutations is
+    lost and concurrent trials collide on ``trial_NN_*`` directories.
+    """
+    if settings.n_workers not in (1, None):
+        raise ValueError(
+            f"embedding.n_workers={settings.n_workers} is unsupported. SMAC "
+            f"trial bookkeeping requires n_workers=1; parallelize inside a "
+            f"trial via embedding.num_core instead."
+        )
