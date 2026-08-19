@@ -17,15 +17,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def _update_false_dir_names(output_dir_name: str) -> str:
-    logger.info(
-        "directory cannot contain 'train', 'valid' or 'test' in the name."
-        "Replacing them with 'trian', 'vaild' and 'tset' respectively."
-    )
+def update_false_dir_names(output_dir_name: str) -> str:
     tmp_name = output_dir_name
     return tmp_name.replace("train", "trian").replace("valid", "vaild").replace("test", "tset")
 
-PROJECT_ROOT = Path(_update_false_dir_names(str(Path(__file__).resolve().parent.parent)))
+PROJECT_ROOT = Path(update_false_dir_names(str(Path(__file__).resolve().parent.parent)))
 DATASETS_DIR = PROJECT_ROOT / "datasets"
 INPUT_DIR = PROJECT_ROOT / "input"
 OUTPUT_DIR = PROJECT_ROOT / "Output"

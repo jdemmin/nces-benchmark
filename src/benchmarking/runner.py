@@ -35,7 +35,7 @@ from src.models.nces import (
     prepare_nces_training_data,
     train_nces,
 )
-from src.paths import OUTPUT_DIR, RunPaths, resolve_knowledge_base, run_paths
+from src.paths import OUTPUT_DIR, RunPaths, resolve_knowledge_base, run_paths, update_false_dir_names
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +45,14 @@ def run_single(
     seed: int,
     config: BenchmarkConfiguration,
     output_dir: Path,
+    benchmark_name: str,
 ) -> dict[str, Any]:
     """Execute one benchmark run: one (knowledge base, seed) pair."""
     # ... Stage 1: ontology parsing ...
     logger.info("\n----- Reached Stage 1 -----\n")
     kb_path = resolve_knowledge_base(knowledge_base_name)
     paths = run_paths(
-        config.project.benchmark_name,
+        benchmark_name,
         seed,
         knowledge_base_name,
         output_dir=output_dir,
@@ -267,7 +268,12 @@ def run_benchmark(
     selected_kbs = list(knowledge_bases or config.knowledge_bases)
     selected_seeds = list(seeds or config.project.seeds)
     base = output_dir or OUTPUT_DIR
-    benchmark_dir = base / config.project.benchmark_name
+    logger.info(
+        "benchmark_name cannot contain 'train', 'valid' or 'test' in the name."
+        "Replacing them with 'trian', 'vaild' and 'tset' respectively."
+    )
+    updated_benchmark_name = update_false_dir_names(config.project.benchmark_name)
+    benchmark_dir = base / Path(updated_benchmark_name)
 
     reports: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -277,7 +283,7 @@ def run_benchmark(
         for seed in selected_seeds:
             logger.info("=== %s | seed %d ===", kb_name, seed)
             try:
-                report = run_single(kb_name, seed, config, output_dir=base)
+                report = run_single(kb_name, seed, config, output_dir=base, benchmark_name=updated_benchmark_name)
             except Exception as error:
                 logger.exception("Benchmark run failed for %s seed %d", kb_name, seed)
                 failures.append(
@@ -298,7 +304,7 @@ def run_benchmark(
             )
 
     summary = {
-        "benchmark_name": config.project.benchmark_name,
+        "benchmark_name": updated_benchmark_name,
         "knowledge_bases": selected_kbs,
         "seeds": selected_seeds,
         "num_runs": len(reports),
