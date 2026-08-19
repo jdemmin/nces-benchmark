@@ -9,7 +9,7 @@
 
 # Data
 
-- CSV data is not copied
+- Delete non best embedding trials. take too much space
 
 # Embeddings
 
