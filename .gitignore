@@ -1,6 +1,6 @@
 # project-specific ignores
 /.conda
-/Output
+/[Oo]utput
 rm_out.sh
 Miniconda3-latest-Linux-x86_64.sh
 

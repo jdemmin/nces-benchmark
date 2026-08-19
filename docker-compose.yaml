@@ -6,14 +6,21 @@ services:
     container_name: nces-benchmark-v2-linux
     volumes:
       - ./datasets:/app/datasets:ro
-      - ./input:/app/input:ro
-      - ./Output:/app/Output
+      - ./input:/app/input/smoke2:ro
+      - ./output:/app/output/docker-compose-smoke
     # DICE + NCES are CPU-bound; cap threads to keep runs reproducible.
     environment:
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
-    command:
-      - --benchmark-name
-      - benchmark1
-      - --datasets
-      - father
+    #command:
+    #  - --benchmark-name
+    #  - docker-compose
+    #  - --datasets
+    #  - semantic_bible
+    #  - --embedding-conditions
+    #  - random
+    #  - dice
+    #  - --hpo-backend
+    #  - smac
+    #  - --seed
+    #  - "42"
