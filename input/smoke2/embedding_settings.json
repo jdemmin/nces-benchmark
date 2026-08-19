@@ -10,7 +10,7 @@
   "num_core": 0,
   "hpo_backend": "smac",
   "n_trials": 16,
-  "trial_walltime_limit": 1800,
+  "trial_walltime_limit": null,
   "n_workers": 1,
   "search_space": {
     "embedding_dim_choices": [32, 64, 128, 256],
