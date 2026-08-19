@@ -111,7 +111,7 @@ jobs:
             -e OMP_NUM_THREADS=1 \
             -e MKL_NUM_THREADS=1 \
             -v "${{ github.workspace }}/datasets:/app/datasets:ro" \
-            -v "${{ github.workspace }}/input:/app/input:ro" \
+            -v "${{ github.workspace }}/input:/app/input/smoke2:ro" \
             -v "${{ github.workspace }}/Output:/app/Output" \
             ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
             --datasets semantic_bible --seeds 1 \
