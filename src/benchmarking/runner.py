@@ -465,6 +465,6 @@ def _assert_model_dir_contains_needed_files(trained_models_dir: Path) -> None:
 
     if len(missing_files) > 0:
         raise FileNotFoundError(
-            f"Trained models directory is missing expected files: {missing_files}. "
+            f"Trained models directory ``{trained_models_dir}`` is missing expected files: {missing_files}. "
             f"Directory contents: {list(trained_models_dir.iterdir())}"
         )
