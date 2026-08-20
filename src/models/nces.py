@@ -246,7 +246,7 @@ def evaluate_nces(
             predictions = model.fit(lp)
             # returns Union type. Expect a single OWLClassExpression, so check the type and raise if not.
             hypothesis = (model.best_hypotheses())
-            if type(hypothesis) is list and len(hypothesis) == 1:
+            if type(hypothesis) is list and len(hypothesis) > 0:
                 hypothesis = hypothesis[0]
             if not (isinstance(hypothesis, OWLClassExpression) or hypothesis is None):
                 raise TypeError(
