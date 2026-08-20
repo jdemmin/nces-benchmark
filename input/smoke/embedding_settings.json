@@ -1,6 +1,23 @@
 {
-    "model_name": "Keci", 
-    "embedding_dim": 16,
-    "epochs": 2,
-    "batch_size": 8
+  "model_name": "Shallom",
+  "embedding_dim": 64,
+  "epochs": 20,
+  "batch_size": 64,
+  "learning_rate": 0.1,
+  "scoring_technique": "KvsAll",
+  "trainer": "torchCPUTrainer",
+  "eval_model": "train_val_test",
+  "num_core": 0,
+  "hpo_backend": "smac",
+  "n_trials": 16,
+  "trial_walltime_limit": null,
+  "n_workers": 1,
+  "search_space": {
+    "embedding_dim_choices": [32, 64, 128, 256],
+    "batch_size_choices": [32, 64, 128, 256],
+    "learning_rate_bounds": [0.001, 0.3],
+    "epochs_bounds": [25, 100],
+    "tune_epochs": false,
+    "tune_scoring_technique": false
+  }
 }

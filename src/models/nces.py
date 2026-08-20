@@ -13,11 +13,18 @@ from typing import Any, cast
 from src.benchmarking.metrics import (
     calculate_metrics,
     compute_lift,
-    summarize_by_complexity,
 )
-from src.config import NCESSettings
+from src.config import EmbeddingSettings, NCESSettings
 from src.data.lp import LearningProblem
 from src.data.ontology import concept_extension
+from src.data.results import (
+    EmbeddingResult,
+    LearningProblemResult,
+    MeanMetricsResult,
+    MetricsResult,
+    NCESStats,
+    TargetExtensionStructure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +102,7 @@ def train_nces(
     train_data: Sequence[tuple[str, dict[str, list[str]]]],
     settings: NCESSettings,
     m: int,
-) -> dict[str, Any]:
+) -> NCESStats:
     """Train NCES on the train split and save the weights.
 
     Upstream ``NCESTrainer.train`` initializes ``best_weights = (None, None)``
@@ -123,7 +130,7 @@ def train_nces(
         len(train_data),
     )
     started = time.perf_counter()
-    degraded = None
+    degraded = False
     try:
         model.train(
             cast(Any, list(train_data)),
@@ -138,23 +145,20 @@ def train_nces(
     except TypeError as error:
         if "state_dict to be dict-like" not in str(error):
             raise
-        degraded = (
+        degraded = True
+        logger.warning(
             "Upstream NCESTrainer never recorded best weights (no epoch "
             "exceeded zero hard accuracy); persisted final-epoch weights "
             "instead of best-epoch weights."
         )
-        logger.warning("%s", degraded)
         _save_final_weights(model, trained_models_dir, settings)
     runtime = time.perf_counter() - started
 
-    return {
-        "learner_name": settings.learner_name,
-        "epochs": settings.epochs,
-        "batch_size": settings.batch_size,
-        "num_train_problems": len(train_data),
-        "runtime_seconds": round(runtime, 3),
-        "degraded": degraded,
-    }
+    return NCESStats(
+        learner_name=settings.learner_name,
+        runtime_seconds=round(runtime, 3),
+        degraded=degraded,
+    )
 
 def _save_final_weights(model, trained_models_dir: Path, settings: NCESSettings) -> None:
     """Write the artifacts upstream would have written after restoring weights."""
@@ -203,7 +207,8 @@ def evaluate_nces(
     knowledge_base,
     all_individuals: Sequence[str],
     split_name: str,
-) -> dict[str, Any]:
+    trained_model_settings: EmbeddingSettings,
+) -> EmbeddingResult:
     """Evaluate the trained NCES learner on a held-out learning-problem split.
 
     Each hypothesis is rendered to DL syntax, its extension is computed with
@@ -215,8 +220,20 @@ def evaluate_nces(
     from owlapy.render import DLSyntaxObjectRenderer
 
     if not problems:
-        return {"split": split_name, "results": [], "complexity_summary": {}}
-
+        return EmbeddingResult(
+            split_name=split_name,
+            learning_problem_results=[],
+            embedding_settings=trained_model_settings,
+            nces_stats=NCESStats(
+                learner_name=settings.learner_name,
+                runtime_seconds=0.0,
+                degraded=False,
+            ),
+            number_of_problems=0,
+            number_of_successful_problems=0,
+        )
+    _assert_model_dir_contains_needed_files(trained_models_dir, settings)
+    eval_timer = time.perf_counter()
     model = build_nces(
         kb_path,
         embeddings_path,
@@ -225,22 +242,12 @@ def evaluate_nces(
         load_pretrained=True,
         m=m,
     )
-
-    expected = trained_models_dir / f"trained_{settings.learner_name}.pt"
-    if not expected.is_file():
-        raise FileNotFoundError(
-            f"No trained NCES weights at {expected}; evaluation would score an "
-            f"untrained learner. Contents: {sorted(p.name for p in trained_models_dir.glob('*'))}"
-        )
-
     renderer = DLSyntaxObjectRenderer()
-
-    records: list[dict[str, Any]] = []
+    records: list[LearningProblemResult] = []
     for problem in problems:
         positives = {OWLNamedIndividual(iri) for iri in problem.pos_example}
         negatives = {OWLNamedIndividual(iri) for iri in problem.neg_example}
         lp = PosNegLPStandard(pos=positives, neg=negatives)
-
         started = time.perf_counter()
         try:
             predictions = model.fit(lp)
@@ -260,22 +267,17 @@ def evaluate_nces(
                 type(error).__name__,
                 error,
             )
-            records.append(
-                {
-                    "id": problem.id,
-                    "target_concept": problem.target_concept,
-                    "hypotheses": "",
-                    "complexity": problem.complexity.to_dict(),
-                    "error": str(error),
-                    "error_type": type(error).__name__,
-                }
+            failed_learning_problem = LearningProblemResult(
+                learning_problem=problem,
+                num_pos=problem.num_pos,
+                num_neg=problem.num_neg,
+                error=type(error).__name__ + ": " + str(error),
             )
+            records.append(failed_learning_problem)
             continue
         del predictions
-
         expression = getattr(hypothesis, "concept", hypothesis)
         hypothesis_dl = renderer.render(expression) if expression else ""
-
         predicted = (
             concept_extension(knowledge_base, hypothesis_dl)
             if hypothesis_dl
@@ -289,54 +291,125 @@ def evaluate_nces(
             target = concept_extension(knowledge_base, problem.target_concept)
             target = target or frozenset(problem.pos_example)
 
-        metrics = calculate_metrics(predicted, target, all_individuals)
         runtime = time.perf_counter() - started
-        negative_extension = set(all_individuals) - set(target)
-        records.append(
-            {
-                "id": problem.id,
-                "target_concept": problem.target_concept,
-                "hypotheses": hypothesis_dl,
-                "complexity": problem.complexity.to_dict(),
-                "num_pos": problem.num_pos,
-                "num_neg": problem.num_neg,
-                "target_positive_count": len(target),
-                "target_negative_count": len(negative_extension),
-                "target_extension_size": {
-                    "positive": len(target),
-                    "negative": len(negative_extension),
-                    "total": len(all_individuals),
-                },
-                "runtime_seconds": round(runtime, 3),
-                **metrics.to_dict(),
-                "lift": compute_lift(complexity=problem.complexity, f1=metrics.f1),
-            }
+        metrics = calculate_metrics(predicted, target, all_individuals)
+        lift = compute_lift(complexity=problem.complexity, f1=metrics.f1)
+        if lift is None:
+            logger.warning(
+                "Learning problem %s has no hardness annotation; "
+                "lift is undefined and will be reported as 0.0",
+                problem.id,
+            )
+            lift = 0.0
+        metric_result = MetricsResult(
+            accuracy=metrics.accuracy,
+            f1_score=metrics.f1,
+            jaccard=metrics.jaccard,
+            precision=metrics.precision,
+            recall=metrics.recall,
+            intersection=metrics.intersection,
+            union=metrics.union,
+            semantic_equivalence=metrics.semantic_equivalence,
+            lift=lift, # type: ignore //is checked above
         )
 
-    scored = [record for record in records if "error" not in record]
-    return {
-        "split": split_name,
-        "num_problems": len(records),
-        "num_scored": len(scored),
-        "mean_f1": _mean(scored, "f1"),
-        "mean_accuracy": _mean(scored, "accuracy"),
-        "semantic_equivalence_rate": _mean(scored, "semantic_equivalence"),
-        "results": records,
-        "complexity_summary": summarize_by_complexity(scored),
-    }
+        negative_extension = set(all_individuals) - set(target)
+
+        learning_problem_result = LearningProblemResult(
+            learning_problem=problem,
+            hypotesis=hypothesis_dl,
+            num_pos=problem.num_pos,
+            num_neg=problem.num_neg,
+            target_extension=TargetExtensionStructure(
+                positive=len(target),
+                negative=len(negative_extension),
+            ),
+            metrics=metric_result,
+            runtime=round(runtime, 3),
+        )
+        records.append(learning_problem_result)
+    scored = [record for record in records if record.error is None]
+    mean_metrics = MeanMetricsResult(
+        mean_accuracy=_mean(scored, "accuracy"),
+        mean_f1_score=_mean(scored, "f1_score"),
+        mean_jaccard=_mean(scored, "jaccard"),
+        mean_semantic_equivalence=_meanSemanticEquivalence(scored),
+        mean_intersection=_mean(scored, "intersection"),
+        mean_union=_mean(scored, "union"),
+        mean_precision=_mean(scored, "precision"),
+        mean_recall=_mean(scored, "recall"),
+        mean_lift=_mean(scored, "lift"),
+    )
+    return EmbeddingResult(
+        split_name=split_name,
+        number_of_problems=len(records),
+        number_of_successful_problems=len(scored),
+        mean_metrics=mean_metrics,
+        learning_problem_results=records,
+        embedding_settings=trained_model_settings,
+        nces_stats=NCESStats(
+            learner_name=settings.learner_name,
+            runtime_seconds=round(time.perf_counter() - eval_timer, 3),
+            degraded=False,
+        ),
+    )
 
 
-def _mean(records: list[dict[str, Any]], key: str) -> float:
+def _mean(records: list[LearningProblemResult], key: str) -> float:
     """
-    Compute the mean of a numeric key in a list of dicts.
+    Compute the mean of a numeric key in a list of LearningProblemResults.
     Ignores missing keys.
     """
     values = []
     for entry in records:
-        entry = entry.get(key)
+        entry = getattr(entry.metrics, key, None)
         if entry is not None:
             values.append(float(entry))
     return sum(values) / len(values) if values else 0.0
 
+def _meanSemanticEquivalence(items: list[LearningProblemResult]) -> float:
+    """
+    Compute the mean of the semantic_equivalence metric in a list of LearningProblemResults.
+    Ignores missing keys.
+    """
+    if items is None or len(items) == 0:
+        return 0.0
+    value: int = 0
+    for entry in items:
+        if (
+            entry.metrics is not None
+            and entry.metrics.semantic_equivalence
+        ):
+            value += 1
+    return value / len(items)
+
 def _fingerprint(net) -> float:
     return sum(float(p.detach().abs().sum()) for p in net.parameters())
+
+
+def _assert_model_dir_contains_needed_files(
+        trained_models_dir: Path, 
+        settings: NCESSettings
+    ) -> None:
+    """Check that the trained models directory contains the expected files."""
+    if not trained_models_dir.exists():
+        raise FileNotFoundError(
+            f"Trained models directory does not exist: {trained_models_dir}"
+        )
+
+    expected = trained_models_dir / f"trained_{settings.learner_name}.pt"
+    if not expected.is_file():
+        raise FileNotFoundError(
+            f"No trained NCES weights at {expected}; evaluation would score an "
+            "untrained learner. "
+            f"Contents: {sorted(p.name for p in trained_models_dir.glob('*'))}"
+        )
+    expected_files = ["vocab.json", "inv_vocab.npy"]
+    missing_files = [f for f in expected_files
+                     if not (trained_models_dir / f).exists()]
+    if len(missing_files) > 0:
+        raise FileNotFoundError(
+            f"Trained models directory ``{trained_models_dir}``" 
+            f"is missing expected files: {missing_files}. "
+            f"Directory contents: {list(trained_models_dir.iterdir())}"
+        )

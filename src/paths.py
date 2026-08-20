@@ -62,6 +62,9 @@ class RunPaths:
     def trained_models_dir(self) -> Path:
         return self.nces_dir / "models"
 
+    def trained_model_dir_by_condition(self, suffix: str) -> Path:
+        return self.trained_models_dir / suffix
+
     @property
     def logs_dir(self) -> Path:
         return self.root / "logs"

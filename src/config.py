@@ -338,7 +338,50 @@ class EmbeddingSettings:
             n_workers=int(payload.get("n_workers", 1)),
             search_space=EmbeddingSearchSpace.from_payload(payload),
         )
-        
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EmbeddingSettings:
+        walltime = data.get("walltime_limit")
+        trial_walltime = data.get("trial_walltime_limit")
+        return cls(
+            model_name=str(data.get("model_name", "Keci")),
+            embedding_dim=int(data.get("embedding_dim", 64)),
+            epochs=int(data.get("epochs", 50)),
+            batch_size=int(data.get("batch_size", 64)),
+            scoring_technique=str(data.get("scoring_technique", "KvsAll")),
+            trainer=str(data.get("trainer", "torchCPUTrainer")),
+            eval_model=str(data.get("eval_model", "train_val_test")),
+            num_core=int(data.get("num_core", 0)),
+            learning_rate=float(data.get("learning_rate", 0.1)),
+            hpo_backend=str(data.get("hpo_backend", "smac")),
+            n_trials=int(data.get("n_trials", 16)),
+            walltime_limit=None if walltime is None else float(walltime),
+            trial_walltime_limit=(
+                None if trial_walltime is None else float(trial_walltime)
+            ),
+            n_workers=int(data.get("n_workers", 1)),
+            search_space=EmbeddingSearchSpace.from_payload(data),
+        )
+
+    
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "model_name": self.model_name,
+            "embedding_dim": self.embedding_dim,
+            "epochs": self.epochs,
+            "batch_size": self.batch_size,
+            "scoring_technique": self.scoring_technique,
+            "trainer": self.trainer,
+            "eval_model": self.eval_model,
+            "num_core": self.num_core,
+            "learning_rate": self.learning_rate,
+            "hpo_backend": self.hpo_backend,
+            "n_trials": self.n_trials,
+            "walltime_limit": self.walltime_limit,
+            "trial_walltime_limit": self.trial_walltime_limit,
+            "n_workers": self.n_workers,
+            "search_space": vars(self.search_space),
+        }
 
 
 @dataclass(frozen=True)

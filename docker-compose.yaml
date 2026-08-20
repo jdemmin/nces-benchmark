@@ -12,15 +12,3 @@ services:
     environment:
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
-    #command:
-    #  - --benchmark-name
-    #  - docker-compose
-    #  - --datasets
-    #  - semantic_bible
-    #  - --embedding-conditions
-    #  - random
-    #  - dice
-    #  - --hpo-backend
-    #  - smac
-    #  - --seed
-    #  - "42"

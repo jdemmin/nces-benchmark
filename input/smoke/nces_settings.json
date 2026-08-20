@@ -1,7 +1,7 @@
 {
     "learner_name": "GRU", 
     "embedding_dim": 16, 
-    "epochs": 300, 
+    "epochs": 20, 
     "batch_size": 4, 
     "proj_dim": 20, 
     "rnn_n_layers": 1, 
