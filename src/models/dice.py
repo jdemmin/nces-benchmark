@@ -149,7 +149,7 @@ class EmbeddingResultDice:
             "metrics": self.metrics,
             "search_trials": self.search_trials,
             "validation_error": self.validation_error,
-            "model_dir": str(self.embeddings_path) if self.embeddings_path else None,
+            "embeddings_path": str(self.embeddings_path) if self.embeddings_path else None,
         }
 
 #: dicee's ReadFromDisk does substring matching on full glob paths.
