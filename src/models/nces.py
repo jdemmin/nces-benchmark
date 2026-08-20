@@ -325,7 +325,15 @@ def evaluate_nces(
 
 
 def _mean(records: list[dict[str, Any]], key: str) -> float:
-    values = [float(record.get(key, 0.0)) for record in records]
+    """
+    Compute the mean of a numeric key in a list of dicts.
+    Ignores missing keys.
+    """
+    values = []
+    for entry in records:
+        entry = entry.get(key)
+        if entry is not None:
+            values.append(float(entry))
     return sum(values) / len(values) if values else 0.0
 
 def _fingerprint(net) -> float:
