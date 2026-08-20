@@ -118,6 +118,9 @@ def test_run_single_produces_report(
         )
     )
     monkeypatch.setattr(
+        runner, "_write_json", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
         runner,
         "evaluate_nces",
         lambda *a, **k: EmbeddingResult(
