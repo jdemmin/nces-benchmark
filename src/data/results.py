@@ -137,6 +137,37 @@ class MetricsResult:
             "lift": metrics_result.lift
         }
 
+class TargetExtensionStructure:
+    """
+    Represents the structure of a target extension,
+    including the number of positive and negative
+    examples.
+    """
+    positive: int
+    negative: int
+    total: int
+
+    def __init__(self, positive: int, negative: int):
+        self.positive = positive
+        self.negative = negative
+        self.total = positive + negative
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TargetExtensionStructure":
+        return cls(
+            positive=data.get("positive", 0),
+            negative=data.get("negative", 0),
+            # total is computed automatically, no need to get it from the dict
+        )
+
+    @classmethod
+    def to_dict(cls, target_extension_structure: "TargetExtensionStructure") -> dict:
+        return {
+            "positive": target_extension_structure.positive,
+            "negative": target_extension_structure.negative,
+            "total": target_extension_structure.total
+        }
+
 class LearningProblemResult:
     """
     Represents the result of a single learning problem,
@@ -146,14 +177,14 @@ class LearningProblemResult:
     """
     learning_problem: LearningProblem
     hypotesis: str
-    target_extension: dict[str, int]
+    target_extension: TargetExtensionStructure
     metrics: MetricsResult
 
     def __init__(
         self,
         learning_problem: LearningProblem,
         hypotesis: str,
-        target_extension: dict[str, int],
+        target_extension: TargetExtensionStructure,
         metrics: MetricsResult
     ):
         self.learning_problem = learning_problem
@@ -165,7 +196,7 @@ class LearningProblemResult:
     def from_dict(cls, data: dict) -> "LearningProblemResult":
         learning_problem = LearningProblem.from_dict(data.get("learning_problem", {}))
         hypotesis = data.get("hypotesis", "")
-        target_extension = data.get("target_extension", {})
+        target_extension = TargetExtensionStructure.from_dict(data.get("target_extension", {}))
         metrics_data = data.get("metrics", {})
         metrics = MetricsResult.from_dict(metrics_data)
 
@@ -181,7 +212,7 @@ class LearningProblemResult:
         return {
             "learning_problem": learning_problem_result.learning_problem.to_dict(),
             "hypotesis": learning_problem_result.hypotesis,
-            "target_extension": learning_problem_result.target_extension,
+            "target_extension": TargetExtensionStructure.to_dict(learning_problem_result.target_extension),
             "metrics": MetricsResult.to_dict(learning_problem_result.metrics)
         }
 
