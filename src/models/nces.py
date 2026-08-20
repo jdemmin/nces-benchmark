@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from src.benchmarking.metrics import (
+    _mean,
+    _meanSemanticEquivalence,
     calculate_metrics,
     compute_lift,
 )
@@ -354,34 +356,6 @@ def evaluate_nces(
         ),
     )
 
-
-def _mean(records: list[LearningProblemResult], key: str) -> float:
-    """
-    Compute the mean of a numeric key in a list of LearningProblemResults.
-    Ignores missing keys.
-    """
-    values = []
-    for entry in records:
-        entry = getattr(entry.metrics, key, None)
-        if entry is not None:
-            values.append(float(entry))
-    return sum(values) / len(values) if values else 0.0
-
-def _meanSemanticEquivalence(items: list[LearningProblemResult]) -> float:
-    """
-    Compute the mean of the semantic_equivalence metric in a list of LearningProblemResults.
-    Ignores missing keys.
-    """
-    if items is None or len(items) == 0:
-        return 0.0
-    value: int = 0
-    for entry in items:
-        if (
-            entry.metrics is not None
-            and entry.metrics.semantic_equivalence
-        ):
-            value += 1
-    return value / len(items)
 
 def _fingerprint(net) -> float:
     return sum(float(p.detach().abs().sum()) for p in net.parameters())
