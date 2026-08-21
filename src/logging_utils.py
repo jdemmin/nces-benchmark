@@ -26,16 +26,12 @@ class ColoredFormatter(logging.Formatter):
     HIGHLIGHT = "\033[1;35m"  # Bold magenta
 
     HIGHLIGHT_WORDS = frozenset([
-        "important",
-        "target",
-        "success",
-        "failed",
-        "NCES",
         "random",
         "dice",
         "train",
         "valid",
         "test",
+        "Completed Stage",
     ])
 
 
