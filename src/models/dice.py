@@ -573,28 +573,6 @@ def _entity_embedding_matrix(model: Any) -> np.ndarray:
     raise AttributeError(msg)
 
 
-# def cleanup_run_dir(run_dir: Path) -> None:
-#     """Remove the run directory after exporting the embeddings.
-
-#     The run directory is large and contains no information NCES needs. It is
-#     only kept for debugging. The path contains a file name so we take the parent.
-#     Further the given path itself is retained for the report, so we only remove
-#     the rest of the directory. This is safe because the run directory is created
-#     per trial and is not shared with any other process.
-#     """
-#     import shutil
-
-#     temp_dir = tempfile.mkdtemp()
-#     shutil.move(str(run_dir), temp_dir)
-#     if run_dir.parent.exists():
-#         shutil.rmtree(run_dir.parent)
-#         logger.info("Removed DICE run directory %s", run_dir.parent)
-#     run_dir.parent.mkdir(parents=True, exist_ok=True)
-#     shutil.move(str(Path(temp_dir) / run_dir.name), run_dir.parent)
-#     shutil.rmtree(temp_dir)
-#     assert run_dir.exists(), f"Failed to restore {run_dir} after cleanup."
-
-
 def _entity_index_mapping(model: Any) -> tuple[list[str], list[int]]:
     """Return ``(entity_names, row_positions)`` for a loaded ``KGE``."""
     import pandas as pd
