@@ -99,7 +99,7 @@ def _ratio(numerator: float, denominator: float) -> float:
     return float(numerator) / float(denominator) if denominator else 0.0
 
 
-def _mean_embeddings_results(reports: Sequence[EmbeddingResult]) -> MeanMetricsResult:
+def mean_embeddings_results(reports: Sequence[EmbeddingResult]) -> MeanMetricsResult:
     """Compute the mean of the metrics across multiple embedding results."""
     keys = {
         "mean_accuracy": 0.0,

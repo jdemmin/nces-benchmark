@@ -12,7 +12,7 @@ from typing import Any
 
 from ontolearn.knowledge_base import KnowledgeBase
 
-from src.benchmarking.metrics import _mean_embeddings_results
+from src.benchmarking.metrics import mean_embeddings_results
 from src.config import BenchmarkConfiguration
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
@@ -109,10 +109,10 @@ def run_benchmark(
                 failures.append(knowledge_base_failure)
                 continue
             reports.append(report)
-        random_mean = _mean_embeddings_results(
+        random_mean = mean_embeddings_results(
             [r.random_embedding_result for r in reports if r.random_embedding_result is not None]
         )
-        dice_mean = _mean_embeddings_results(
+        dice_mean = mean_embeddings_results(
             [r.dice_embedding_result for r in reports if r.dice_embedding_result is not None]
         )
         knowledge_base_result = KnowledgeBaseResult(
