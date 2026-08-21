@@ -71,16 +71,16 @@ def run_benchmark(
         ):
         logger.warning(
             "Random embeddings must follow after other embedding conditions." \
-            "Otherwise, this can lead to a situation where random and the dice" \
-            "embedding differ in dimensionality, which will cause NCES to fail." \
+            "Otherwise, this can lead to random and dice differing in" \
+            "embedding dimensionality." \
         )
         raise ValueError("Random embeddings must follow after other embedding conditions.")
     selected_kbs = list(knowledge_bases or config.knowledge_bases)
     selected_seeds = list(seeds or config.project.seeds)
     base = output_dir or OUTPUT_DIR
     logger.info(
-        "benchmark_name cannot contain 'train', 'valid' or 'test' in the name."
-        "Replacing them with 'trian', 'vaild' and 'tset' respectively."
+        "benchmark_name cannot contain train, valid or test in the name."
+        "Replacing them with '_trian_', '_vaild_' and '_tset_' respectively."
     )
     updated_benchmark_name = update_false_dir_names(config.project.benchmark_name)
     benchmark_dir = base / Path(updated_benchmark_name)
@@ -149,28 +149,11 @@ def run_single(
     )
     paths.mkdirs()
     handler = configure_logging(paths.logs_dir / f"{knowledge_base_name}_{seed}.log")
-    logger.info(
-        """
-        \n
-        --------------------------------------------------------------------
-        | Reached Stage 1: Ontology parsing                                |
-        --------------------------------------------------------------------
-        \n
-        """
-    )
     started = time.perf_counter()
     try:
         ontology_parse_result = _stage_parse_ontology(kb_path)
         knowledge_base = ontology_parse_result.knowledge_base
-        logger.info(
-            """
-            \n
-            --------------------------------------------------------------------
-            | Reached Stage 2: Learning-problem generation                     |
-            --------------------------------------------------------------------
-            \n
-            """
-        )
+        logger.info("Completed Stage 1: Ontology parsing.")
         problems = generate_learning_problems(
             kb_path,
             paths.nces_data_dir,
@@ -181,18 +164,10 @@ def run_single(
             raise RuntimeError(
                 f"No non-degenerate learning problems generated for {knowledge_base_name}."
             )
-        logger.info(
-            """
-            \n
-            --------------------------------------------------------------------
-            | Reached Stage 3: Hardness annotation                             |
-            --------------------------------------------------------------------
-            \n
-            """
-        )
+        logger.info("Completed Stage 2: Learning-problem generation for %d problems.", len(problems))
         # Knowledge base only. No embedding-derived quantity may enter here, or
         # the benchmark's independent variable is contaminated.
-        logger.info("Annotating hardness for %d learning problems", len(problems))
+        logger.info("Annotating hardness for %d learning problems.", len(problems))
         hardness_annotation_result = _stage_hardness_annotation(
             problems, knowledge_base, ontology_parse_result.all_individuals
         )
@@ -209,16 +184,9 @@ def run_single(
                 ", ..." if len(unparsed) > 5 else "",
             )
         _log_complexity_distribution(problems)
+        logger.info("Completed Stage 3: Hardness annotation for %d learning problems", len(problems))
         save_learning_problems(problems, paths.nces_data_dir / "learning_problems.json")
-        logger.info(
-            """
-            \n
-            ----------------------------------------------------------------
-            | Reached Stage 4: Learning-problem splitting                  |
-            ----------------------------------------------------------------
-            \n
-            """
-        )
+        logger.info("Saved learning problems to %s", paths.nces_data_dir / "learning_problems.json")
         split = split_learning_problems(
             problems,
             seed=seed,
@@ -231,15 +199,7 @@ def run_single(
             len(split["train"]),
             len(split["test"]),
         )
-        logger.info(
-            """
-            \n
-            ----------------------------------------------------------------
-            | Reached Stage 5: Embedding Stage                             |
-            ----------------------------------------------------------------
-            \n
-            """
-        )
+        logger.info("Completed Stage 4: Learning-problem splitting.")
         embedding_report = _embedding_stage(
             paths=paths,
             kb_path=kb_path,
@@ -247,13 +207,8 @@ def run_single(
             seed=seed,
         )
         logger.info(
-            """
-            \n
-            ----------------------------------------------------------------
-            | Reached Stage 6/7: Training & Evaluation                     |
-            ----------------------------------------------------------------
-            \n
-            """
+            "Completed Stage 5: Embedding generation for" \
+            "all conditions and collected results."
         )
         single_run_result = _stage_train_eval_nces(
             split=split,
@@ -265,12 +220,15 @@ def run_single(
             embedding_report=embedding_report,
             config=config,
         )
+        logger.info(
+            "Completed Stage 6: NCES training and evaluation for all conditions."
+        )
         single_run_result.set_runtime(round(time.perf_counter() - started, 3))
         _write_json(
             payload=single_run_result.to_dict(),
             path=paths.nces_results_dir / "single_run_result.json",
         )
-        logger.info("\n----- All stages complete -----\n")
+        logger.info("Wrote single-run result to %s", paths.nces_results_dir / "single_run_result.json")
         atomic_extensions = compute_atomic_class_extensions(knowledge_base)
         knowledge_base_stats = KnowledgeBaseStats(
             knowledge_base_name=knowledge_base_name,
@@ -281,6 +239,10 @@ def run_single(
         _write_json(
             payload=knowledge_base_stats.__dict__,
             path=paths.kb_dir / f"knowledge_base_stats_{seed}.json",
+        )
+        logger.info(
+            "Wrote knowledge-base stats to %s",
+            paths.kb_dir / f"knowledge_base_stats_{seed}.json",
         )
         return single_run_result 
     finally:
@@ -440,29 +402,28 @@ def _stage_train_eval_nces(
     train_data = prepare_nces_training_data(
         split["train"], paths.nces_data_dir / "nces_train_data.json"
     )
+    logger.info("Prepared NCES training data")
     conditions: dict[str, EmbeddingResult] = {}
     for condition in config.project.embedding_conditions:
         embeddings_file_path = paths.entity_embeddings_path(
             model_name=config.embedding.model_name, random=(condition == "random")
-        )     
-        logger.info(
-            """
-            \n
-            --------------------------------------------------------------------
-            | Stage 6/7: NCES started training                                 |
-            --------------------------------------------------------------------
-            \n
-            """
         )
         try:
             if embeddings_file_path is None:
                 raise FileNotFoundError(f"Embeddings path for condition '{condition}' is None.")
             csv_dim = get_csv_dimension(embeddings_file_path)
+            logger.info("CSV dimension for condition '%s': %d", condition, csv_dim)
         except Exception as e:
             logger.error("Failed to get CSV dimension: %s", e)
             raise
         trained_model_evaluate_nces_input = paths.nces_eval_model_input_dir(condition)
         trained_model_train_nces_output = paths.nces_suffix_dir(condition)
+        logger.info(
+            "Starting NCES training for condition '%s'" \
+            "with embeddings from '%s'",
+            condition,
+            embeddings_file_path,
+        )
         training = train_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
@@ -476,14 +437,15 @@ def _stage_train_eval_nces(
             path=trained_model_train_nces_output / f"nces_training_stats_{condition}.json",
         )
         logger.info(
-            """
-            \n
-            --------------------------------------------------------------------
-            | Stage 6/7: NCES started evaluation                               |
-            --------------------------------------------------------------------
-            \n
-            """
-        ) 
+            "Completed NCES training for condition '%s'. Stats written to '%s'",
+            condition,
+            trained_model_train_nces_output / f"nces_training_stats_{condition}.json",
+        )
+        logger.info(
+            "Starting NCES evaluation for condition '%s' with embeddings from '%s'",
+            condition,
+            embeddings_file_path,
+        )
         evaluation = evaluate_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
@@ -496,6 +458,10 @@ def _stage_train_eval_nces(
             split_name="test",
             m=csv_dim,
             trained_model_settings=embedding_report[condition].embedding_settings,
+        )
+        logger.info(
+            "Completed NCES evaluation for condition '%s'.",
+            condition,
         )
         conditions[condition] = evaluation
     return SingleRunResult(

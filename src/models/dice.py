@@ -82,12 +82,21 @@ def grid_search(
         ):
             best = (score, trial_settings, report, validation_error)
     if best is None:
-        raise RuntimeError(
-            "Every DICE hyperparameter trial failed; see search_trials for details."
+        msg = (
+            "GridSearch: Every DICE hyperparameter trial failed;"
+            "see search_trials for details."
         )
+        logger.error(msg)
+        raise RuntimeError(msg)
     _, best_settings, best_report, best_validation_error = best
+    best_run_dir = _best_trial_run_dir(trials, best_settings)
     logger.info(
-        "Selected DICE configuration dim=%d batch=%d (score=%.4f)",
+        "GridSearch: evaluated best DICE hyperparameters: %s. Located at %s",
+        best_settings.to_dict(),
+        best_run_dir,
+    )
+    logger.info(
+        "GridSearch: Selected DICE configuration dim=%d batch=%d (score=%.4f)",
         best_settings.embedding_dim,
         best_settings.batch_size,
         best[0],
@@ -97,7 +106,7 @@ def grid_search(
         best_report=best_report,
         trials=trials,
         validation_error=best_validation_error,
-        best_run_dir=_best_trial_run_dir(trials, best_settings),
+        best_run_dir=best_run_dir,
     )
 
     
@@ -185,13 +194,15 @@ def _assert_dicee_safe_dataset_dir(directory: Path) -> None:
     parent = str(directory.resolve().parent).lower()
     offenders = [t for t in DICEE_RESERVED_PATH_TOKENS if t in parent]
     if offenders:
-        raise ValueError(
+        msg = (
             f"The DICE dataset directory {directory} has ancestor path "
             f"segments containing {offenders}. dicee matches these as "
             f"substrings of the full path and would route valid.txt and "
             f"test.txt into the training set. Choose a benchmark name or "
             f"output directory without these tokens."
         )
+        logger.error(msg)
+        raise ValueError(msg)
 
 def stage_dicee_dataset(data_dir: Path, staging_root: Path) -> Path:
     """Copy the split files into a dicee-safe directory.
@@ -204,6 +215,14 @@ def stage_dicee_dataset(data_dir: Path, staging_root: Path) -> Path:
     staged.mkdir(parents=True, exist_ok=True)
     for name in ("train", "valid", "test"):
         shutil.copyfile(data_dir / f"{name}.txt", staged / f"{name}.txt")
+    logger.info(
+        "Staged DICE dataset from %s to %s (train=%d, valid=%d, test=%d)",
+        data_dir,
+        staged,
+        len(list((data_dir / "train.txt").open())),
+        len(list((data_dir / "valid.txt").open())),
+        len(list((data_dir / "test.txt").open())),
+    )
     return staged
 
 def write_dicee_dataset(
@@ -379,17 +398,6 @@ def export_entity_embeddings(
 
     names, positions = _entity_index_mapping(model)
     matrix = _entity_embedding_matrix(model)[positions]
-
-    # Not necessary anymore: NCES now reads out the CSV width.
-    #if expected_dim is not None and matrix.shape[1] != expected_dim:
-    #    raise ValueError(
-    #        f"DICE exported {matrix.shape[1]}-dimensional entity embeddings "
-    #        f"but NCES expects {expected_dim}. Multi-component models "
-    #        f"(Keci, ComplEx, QMult, OMult, DualE) widen the stored matrix; "
-    #        f"set embedding.embedding_dim so the exported width matches "
-    #        f"nces.embedding_dim."
-    #    )
-
     frame = pd.DataFrame(
         matrix,
         index=[str(name) for name in names],
@@ -490,6 +498,14 @@ def build_embeddings(
             validation_error=validation_error,
             embeddings_path=output_path,
         )
+        logger.info(""
+            "DICE embedding completed: %d entities, dim=%d, score=%.4f, "
+            "validation_error=%s",
+            len(entity_names),
+            best.embedding_dim,
+            score,
+            validation_error,
+        )
 
     if "random" in embedding_conditions:
         output_path = embeddings_dir / f"{chosen.model_name}_random.csv"
@@ -509,6 +525,11 @@ def build_embeddings(
         results["random"] = EmbeddingResultDice(
             embedding_settings=chosen,
             embeddings_path=output_path,
+        )
+        logger.info(
+            "Random embedding baseline completed: %d entities, dim=%d",
+            len(entity_names),
+            baseline_dim,
         )
 
     report_path = embeddings_dir / "embedding_report.json"
@@ -541,12 +562,13 @@ def _entity_embedding_matrix(model: Any) -> np.ndarray:
         table = getattr(inner, attribute, None)
         if isinstance(table, torch.nn.Embedding):
             return table.weight.detach().cpu().numpy()
-
-    raise AttributeError(
+    msg = (
         f"Could not locate the entity-embedding table on "
         f"{type(inner).__name__}. Supported attribute names: "
         f"entity_embeddings, emb_ent_real, entity_embedding."
     )
+    logger.error(msg)
+    raise AttributeError(msg)
 
 
 def _entity_index_mapping(model: Any) -> tuple[list[str], list[int]]:

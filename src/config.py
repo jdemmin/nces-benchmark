@@ -204,7 +204,7 @@ class EmbeddingSearchSpace:
     batch_size_choices: tuple[int, ...] = (32, 64, 128, 256)
     learning_rate_bounds: tuple[float, float] = (1e-3, 3e-1)
     epochs_bounds: tuple[int, int] = (25, 100)
-    scoring_technique_choices: tuple[str, ...] = ("KvsAll", "NegSample")
+    scoring_technique_choices: tuple[str, ...] = ("KvsAll", "NegSample", "AllvsAll", "1vsAll")
     tune_epochs: bool = False
     tune_scoring_technique: bool = False
 
@@ -468,7 +468,7 @@ class ProjectSettings:
         try:
             payload = _read_json(path or INPUT_DIR / "project_settings.json")
         except FileNotFoundError:
-            # Provide a default project settings if the file is missing.
+            # Provide a default project settings if the file is missing. relevant for CI/CD pipelines that don't have the input directory mounted.
             logger.info(
                 "project_settings.json not found. Using default project settings."
             )

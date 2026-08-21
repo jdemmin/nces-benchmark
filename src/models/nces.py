@@ -131,6 +131,9 @@ def train_nces(
         settings.epochs,
         len(train_data),
     )
+    logger.info(
+        "Starting NCES training."
+        )
     started = time.perf_counter()
     degraded = False
     try:
@@ -154,6 +157,10 @@ def train_nces(
             "instead of best-epoch weights."
         )
         _save_final_weights(model, trained_models_dir, settings)
+        logger.info(
+            "Saved final-epoch weights to %s",
+            trained_models_dir / f"trained_{settings.learner_name}.pt",
+        )
     runtime = time.perf_counter() - started
 
     return NCESStats(
@@ -222,6 +229,9 @@ def evaluate_nces(
     from owlapy.render import DLSyntaxObjectRenderer
 
     if not problems:
+        logger.warning(
+            "No learning problems provided for evaluation; returning empty results."
+        )
         return EmbeddingResult(
             split_name=split_name,
             learning_problem_results=[],
@@ -258,6 +268,11 @@ def evaluate_nces(
             if type(hypothesis) is list and len(hypothesis) > 0:
                 hypothesis = hypothesis[0]
             if not (isinstance(hypothesis, OWLClassExpression) or hypothesis is None):
+                logger.warning(
+                    "NCES returned unexpected hypothesis type for problem %s: %s",
+                    problem.id,
+                    type(hypothesis),
+                )
                 raise TypeError(
                     f"Expected a single OWLClassExpression, got {type(hypothesis)}"
                 )
@@ -338,6 +353,12 @@ def evaluate_nces(
         mean_recall=_mean(scored, "recall"),
         mean_lift=_mean(scored, "lift"),
     )
+    logger.info(
+        "NCES evaluation completed in %.3f seconds: %d problems, %d successful",
+        time.perf_counter() - eval_timer,
+        len(records),
+        len(scored),
+    )
     return EmbeddingResult(
         split_name=split_name,
         number_of_problems=len(records),
@@ -363,21 +384,39 @@ def _assert_model_dir_contains_needed_files(
     ) -> None:
     """Check that the trained models directory contains the expected files."""
     if not trained_models_dir.exists():
+        logger.error(
+            "Trained models directory does not exist: %s", trained_models_dir
+        )
         raise FileNotFoundError(
             f"Trained models directory does not exist: {trained_models_dir}"
         )
 
     expected = trained_models_dir / f"trained_{settings.learner_name}.pt"
     if not expected.is_file():
+        contents = sorted(p.name for p in trained_models_dir.glob('*'))
+        logger.error(
+            "No trained NCES weights at %s; evaluation would score an "
+            "untrained learner. "
+            "Contents: %s",
+            expected,
+            contents,
+        )
         raise FileNotFoundError(
             f"No trained NCES weights at {expected}; evaluation would score an "
             "untrained learner. "
-            f"Contents: {sorted(p.name for p in trained_models_dir.glob('*'))}"
+            f"Contents: {contents}"
         )
     expected_files = ["vocab.json", "inv_vocab.npy"]
     missing_files = [f for f in expected_files
                      if not (trained_models_dir / f).exists()]
     if len(missing_files) > 0:
+        logger.error(
+            "Trained models directory %s is missing expected files: %s. "
+            "Directory contents: %s",
+            trained_models_dir,
+            missing_files,
+            list(trained_models_dir.iterdir()),
+        )
         raise FileNotFoundError(
             f"Trained models directory ``{trained_models_dir}``" 
             f"is missing expected files: {missing_files}. "
