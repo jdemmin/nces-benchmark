@@ -271,8 +271,6 @@ def evaluate_nces(
             )
             failed_learning_problem = LearningProblemResult(
                 learning_problem=problem,
-                num_pos=problem.num_pos,
-                num_neg=problem.num_neg,
                 error=type(error).__name__ + ": " + str(error),
             )
             records.append(failed_learning_problem)
@@ -320,8 +318,6 @@ def evaluate_nces(
         learning_problem_result = LearningProblemResult(
             learning_problem=problem,
             hypotesis=hypothesis_dl,
-            num_pos=problem.num_pos,
-            num_neg=problem.num_neg,
             target_extension=TargetExtensionStructure(
                 positive=len(target),
                 negative=len(negative_extension),

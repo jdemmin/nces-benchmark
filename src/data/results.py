@@ -7,7 +7,7 @@ from typing import Any
 from ontolearn.knowledge_base import KnowledgeBase
 
 from src.config import EmbeddingSettings
-from src.data.lp import LearningProblem
+from src.data.lp import LearningProblem, LearningProblemTruncated
 from src.data.ontology import Triple
 
 
@@ -177,12 +177,12 @@ class LearningProblemResult:
     Represents the result of a single learning problem,
     including the learning problem details, the
     hypothesis, the target extension, and the evaluation
-    metrics.
+    metrics. A given learning problem is truncated.
+    There is no way to extract it back in its full form,
+    but it is not needed for the report anyway.
     """
-    learning_problem: LearningProblem
+    learning_problem: LearningProblemTruncated
     hypotesis: str = ""
-    num_pos: int
-    num_neg: int
     target_extension: TargetExtensionStructure | None
     metrics: MetricsResult | None
     runtime: float | None
@@ -191,18 +191,14 @@ class LearningProblemResult:
     def __init__(
         self,
         learning_problem: LearningProblem,
-        num_pos: int,
-        num_neg: int,
         target_extension: TargetExtensionStructure | None = None,
         metrics: MetricsResult | None = None,
         runtime: float | None = None,
         error: str | None = None,
         hypotesis: str = "",
     ):
-        self.learning_problem = learning_problem
+        self.learning_problem = learning_problem.to_truncated()
         self.hypotesis = hypotesis
-        self.num_pos = num_pos
-        self.num_neg = num_neg
         self.target_extension = target_extension
         self.metrics = metrics
         self.runtime = runtime
@@ -212,8 +208,6 @@ class LearningProblemResult:
     def from_dict(cls, data: dict) -> "LearningProblemResult":
         learning_problem = LearningProblem.from_dict(data.get("learning_problem", {}))
         hypotesis = data.get("hypotesis", "")
-        num_pos = data.get("num_pos", 0)
-        num_neg = data.get("num_neg", 0)
         target_extension_data = data.get("target_extension")
         target_extension = TargetExtensionStructure.from_dict(target_extension_data) if target_extension_data else None
         metrics_data = data.get("metrics")
@@ -224,8 +218,6 @@ class LearningProblemResult:
         return cls(
             learning_problem=learning_problem,
             hypotesis=hypotesis,
-            num_pos=num_pos,
-            num_neg=num_neg,
             target_extension=target_extension,
             metrics=metrics,
             runtime=runtime,
@@ -243,8 +235,6 @@ class LearningProblemResult:
                 if self.metrics else None,
             "error": self.error,
             "runtime": self.runtime,
-            "num_pos": self.num_pos,
-            "num_neg": self.num_neg
         }
 
 @dataclass
@@ -322,7 +312,7 @@ class EmbeddingResult:
                 for lpr in self.learning_problem_results
             ],
             "embedding_settings": self.embedding_settings.to_dict(),
-            "nces_stats": dataclasses.asdict(self.nces_stats),
+            "nces_stats": self.nces_stats.to_dict(),
             "split_name": self.split_name,
             "number_of_problems": self.number_of_problems,
             "number_of_successful_problems": self.number_of_successful_problems,

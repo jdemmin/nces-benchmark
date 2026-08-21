@@ -30,17 +30,51 @@ _NEG_KEY = "negative examples"
 
 
 @dataclass(frozen=True)
-class LearningProblem:
+class LearningProblemTruncated:
+    """A learning problem with only the target concept and complexity.
+
+    This is used to stratify learning problems before they are expanded into
+    full IRIs.
+    """
+
+    id: str
+    target_concept: str
+    complexity: Complexity
+    num_pos: int = field(default=0)
+    num_neg: int = field(default=0)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "target_concept": self.target_concept,
+            "complexity": self.complexity.to_dict(),
+            "num_pos": self.num_pos,
+            "num_neg": self.num_neg,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> LearningProblemTruncated:
+        return cls(
+            id=str(payload["id"]),
+            target_concept=str(payload["target_concept"]),
+            complexity=Complexity.from_dict(payload["complexity"]),
+            num_pos=int(payload.get("num_pos", 0)),
+            num_neg=int(payload.get("num_neg", 0)),
+        )
+    
+
+@dataclass(frozen=True)
+class LearningProblem(LearningProblemTruncated):
     """One learning problem in the canonical project schema."""
 
     id: str
     target_concept: str
-
-    pos_example: list[str]
-    neg_example: list[str]
     complexity: Complexity
+    pos_example: list[str] = field(default_factory=list)
+    neg_example: list[str] = field(default_factory=list)
     num_pos: int = field(default=0)
     num_neg: int = field(default=0)
+
 
     def __post_init__(self) -> None:
         if not self.pos_example:
@@ -54,6 +88,22 @@ class LearningProblem:
         payload = asdict(self)
         payload["complexity"] = asdict(self.complexity)
         return payload
+
+    def to_truncated(self) -> LearningProblemTruncated:
+        return LearningProblemTruncated(
+            id=self.id,
+            target_concept=self.target_concept,
+            complexity=self.complexity,
+            num_pos=self.num_pos,
+            num_neg=self.num_neg,
+        )
+
+    @classmethod
+    def to_truncated_list(cls, problems: Iterable[LearningProblem]) -> list[LearningProblemTruncated]:
+        return [
+            problem.to_truncated()
+            for problem in problems
+        ]
 
     def as_nces_datapoint(self) -> tuple[str, dict[str, list[str]]]:
         """Convert to the ``(name, examples)`` tuple that ``NCES`` consumes.
