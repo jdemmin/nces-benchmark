@@ -1,6 +1,7 @@
 # docker-compose.yml
 services:
   benchmark:
+    shm_size: '8gb'
     build: .
     image: nces-benchmark-v2:latest
     container_name: nces-benchmark-v2-linux
