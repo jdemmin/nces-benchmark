@@ -6,8 +6,8 @@ services:
     container_name: nces-benchmark-v2-linux
     volumes:
       - ./datasets:/app/datasets:ro
-      - ./input:/app/input/smoke2:ro
-      - ./output:/app/output/docker-compose-smoke
+      - ./input:/app/input:ro
+      - ./output:/app/output:rw
     # DICE + NCES are CPU-bound; cap threads to keep runs reproducible.
     environment:
       OMP_NUM_THREADS: "1"
