@@ -201,6 +201,21 @@ def run_smac_search(
         record["cost"] = CRASH_COST
         _write_trial_record(embeddings_dir, record["trial"], record)
         trials.append(record)
+        error_text = str(record.get("error", "")).lower()
+        if "no space left on device" in error_text or "shared memory" in error_text:
+            logger.error(
+                "SMAC trial %d failed with a shared-memory error: %s",
+                record["trial"],
+                error_text,
+            )
+            # Not a bad region of the search space. the host is
+            # misconfigured. Resampling cannot escape it.
+            aborted["reason"] = (
+                "A trial exhausted /dev/shm. Raise Docker's --shm-size "
+                "(default 64MB is too small for torch tensor IPC) or set "
+                "torch.multiprocessing.set_sharing_strategy('file_system')."
+            )
+            return CRASH_COST
         consecutive["unscored"] += 1
         if consecutive["unscored"] >= MAX_CONSECUTIVE_UNSCORED:
             # Abort rather than let SMAC spend the remaining budget: a
