@@ -306,8 +306,12 @@ def split_learning_problems(
     composition drifts across seeds, which inflates apparent variance between
     embedding conditions.
     """
-    if not problems:
-        return {"train": [], "test": []}
+    if not problems or len(problems) < 2:
+        raise ValueError(
+            f"At least two learning problems are required for a split. "
+            f"It might require even more depending on the ratios and "
+            f"stratification. Got {len(problems)} problems."
+        )
 
     strata = {}
     for problem in problems:
@@ -318,15 +322,15 @@ def split_learning_problems(
     }
 
     for key in sorted(strata):
-        stratum = strata[key]
+        stratum = sorted(strata[key], key=lambda p: p.id)
         random.Random(f"{seed}:{key}").shuffle(stratum)
         total = len(stratum)
-        n_train = max(1, int(total * ratios[0]))
-        n_test = int(total * ratios[1])
-        if n_train + n_test >= total:
-            n_train = total - 1
-        split["train"].extend(stratum[:n_train])
-        split["test"].extend(stratum[n_train:])
+        if 0 < ratios[0] < 1 and 0 < ratios[1] < 1 and ratios[0] + ratios[1] == 1:
+            n_train = max(1, int(total * ratios[0]))
+            split["train"].extend(stratum[:n_train])
+            split["test"].extend(stratum[n_train:])
+        else:
+            raise ValueError(f"Invalid ratios {ratios}: must be positive and sum to 1.")
 
     if not split["test"]:
         # Guarantee a non-empty test split, as the unstratified path did.
