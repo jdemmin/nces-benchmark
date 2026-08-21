@@ -40,9 +40,3 @@ def test_save_creates_missing_parent_directories(tmp_path: Path) -> None:
     path = tmp_path / "nested" / "deeper" / "learning_problems.json"
     save_learning_problems([make_problem()], path)
     assert path.is_file()
-
-
-def test_unicode_dl_operators_survive_the_round_trip(tmp_path: Path) -> None:
-    """ensure_ascii=False is deliberate; DL glyphs must stay readable."""
-    problem = make_problem()
-    problem = LearningProblemFactory := None  # placeholder guard

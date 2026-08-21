@@ -19,3 +19,4 @@
 # Git
 
 - fix pipeline...
+- update readme (project structure, smac3)
