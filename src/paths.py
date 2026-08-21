@@ -104,6 +104,8 @@ class RunPaths:
             self.embeddings_data_dir,
             self.nces_data_dir,
             self.nces_results_dir,
+            self.nces_eval_model_input_dir("dice"),
+            self.nces_eval_model_input_dir("random"),
             self.logs_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
