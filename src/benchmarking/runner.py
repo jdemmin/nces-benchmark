@@ -416,8 +416,9 @@ def _stage_train_eval_nces(
         except Exception as e:
             logger.error("Failed to get CSV dimension: %s", e)
             raise
-        trained_model_evaluate_nces_input = paths.nces_eval_model_input_dir(condition)
-        trained_model_train_nces_output = paths.nces_suffix_dir(condition)
+        # location where the trained model will be saved
+        # and where the evaluation will read from
+        trained_model_path = paths.nces_suffix_dir(condition)
         logger.info(
             "Starting NCES training for condition '%s'" \
             "with embeddings from '%s'",
@@ -427,19 +428,19 @@ def _stage_train_eval_nces(
         training = train_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
-            trained_models_dir=trained_model_train_nces_output,
+            trained_models_dir=trained_model_path,
             train_data=train_data,
             settings=config.nces,
             m=csv_dim,
         )
         _write_json(
             payload=training.to_dict(),
-            path=trained_model_train_nces_output / f"nces_training_stats_{condition}.json",
+            path=trained_model_path / f"nces_training_stats_{condition}.json",
         )
         logger.info(
             "Completed NCES training for condition '%s'. Stats written to '%s'",
             condition,
-            trained_model_train_nces_output / f"nces_training_stats_{condition}.json",
+            trained_model_path / f"nces_training_stats_{condition}.json",
         )
         logger.info(
             "Starting NCES evaluation for condition '%s' with embeddings from '%s'",
@@ -449,7 +450,7 @@ def _stage_train_eval_nces(
         evaluation = evaluate_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
-            trained_models_dir=trained_model_evaluate_nces_input,
+            trained_models_dir=trained_model_path,
             problems=split["test"],
             settings=config.nces,
             knowledge_base=knowledge_base,

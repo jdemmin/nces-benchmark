@@ -59,10 +59,6 @@ def test_mkdirs_creates_every_directory(tmp_path: Path) -> None:
         paths.embeddings_data_dir,
         paths.nces_data_dir,
         paths.nces_results_dir,
-        # removed paths.trained_models_dir,  # Might be obsolete
-        # paths.trained_models_dir,
-        paths.nces_eval_model_input_dir("dice"),
-        paths.nces_eval_model_input_dir("random"),
         paths.logs_dir,
     ):
         assert directory.is_dir()
