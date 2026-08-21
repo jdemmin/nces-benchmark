@@ -9,36 +9,39 @@ import sys
 from pathlib import Path
 
 _FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
-COLORS = {
+
+
+class ColoredFormatter(logging.Formatter):
+    """A logging formatter that adds color to log messages based on their level and highlights specific words."""
+
+    COLORS = {
         logging.DEBUG: "\033[36m",     # Cyan
         logging.INFO: "\033[32m",      # Green
         logging.WARNING: "\033[33m",   # Yellow
         logging.ERROR: "\033[31m",     # Red
         logging.CRITICAL: "\033[1;31m" # Bold red
     }
-RESET = "\033[0m"
-HIGHLIGHT = "\033[1;35m"  # Bold magenta
+    
+    RESET = "\033[0m"
+    HIGHLIGHT = "\033[1;35m"  # Bold magenta
 
-HIGHLIGHT_WORDS = [
-    "important",
-    "target",
-    "success",
-    "failed",
-    "NCES",
-    "random",
-    "dice",
-    "train",
-    "valid",
-    "test",
-]
+    HIGHLIGHT_WORDS = frozenset([
+        "important",
+        "target",
+        "success",
+        "failed",
+        "NCES",
+        "random",
+        "dice",
+        "train",
+        "valid",
+        "test",
+    ])
 
-class ColoredFormatter(logging.Formatter):
-    """A logging formatter that adds color to log messages based on their level and highlights specific words."""
-    from logging_utils import COLORS, HIGHLIGHT, HIGHLIGHT_WORDS, RESET
 
     def __init__(self, fmt=None, datefmt=None, highlight_words=None):
         super().__init__(fmt, datefmt)
-        self.highlight_words = HIGHLIGHT_WORDS if highlight_words is None else highlight_words
+        self.highlight_words = self.HIGHLIGHT_WORDS if highlight_words is None else highlight_words
 
     def format(self, record):
         # First, create the normal formatted message
@@ -48,15 +51,15 @@ class ColoredFormatter(logging.Formatter):
         for word in self.highlight_words:
             message = re.sub(
                 re.escape(word),
-                f"{HIGHLIGHT}{word}{RESET}",
+                f"{self.HIGHLIGHT}{word}{self.RESET}",
                 message,
                 flags=re.IGNORECASE
             )
 
         # Color the complete message depending on log level
-        color = COLORS.get(record.levelno, RESET)
+        color = self.COLORS.get(record.levelno, self.RESET)
 
-        return f"{color}{message}{RESET}"
+        return f"{color}{message}{self.RESET}"
 
 
 # logger = logging.getLogger("my_application")
