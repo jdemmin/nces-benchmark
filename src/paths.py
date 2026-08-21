@@ -69,9 +69,6 @@ class RunPaths:
     def nces_suffix_dir(self, suffix: str) -> Path:
         return self.nces_dir / suffix
 
-    def nces_eval_model_input_dir(self, suffix: str) -> Path:
-        return self.nces_suffix_dir(suffix) / "trained_models"
-
     @property
     def nces_results_dir(self) -> Path:
         return self.nces_dir / "results"
@@ -104,8 +101,6 @@ class RunPaths:
             self.embeddings_data_dir,
             self.nces_data_dir,
             self.nces_results_dir,
-            self.nces_eval_model_input_dir("dice"),
-            self.nces_eval_model_input_dir("random"),
             self.logs_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
