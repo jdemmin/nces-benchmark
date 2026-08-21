@@ -267,8 +267,8 @@ def run_single(
         )
         single_run_result.set_runtime(round(time.perf_counter() - started, 3))
         _write_json(
-            payload=single_run_result.__dict__,
-            path=paths.nces_data_dir / "single_run_result.json",
+            payload=single_run_result.to_dict(),
+            path=paths.nces_results_dir / "single_run_result.json",
         )
         logger.info("\n----- All stages complete -----\n")
         atomic_extensions = compute_atomic_class_extensions(knowledge_base)
@@ -280,7 +280,7 @@ def run_single(
         )
         _write_json(
             payload=knowledge_base_stats.__dict__,
-            path=Path(paths.knowledge_base) / f"knowledge_base_stats_{seed}.json",
+            path=paths.kb_dir / f"knowledge_base_stats_{seed}.json",
         )
         return single_run_result 
     finally:
@@ -444,8 +444,7 @@ def _stage_train_eval_nces(
     for condition in config.project.embedding_conditions:
         embeddings_file_path = paths.entity_embeddings_path(
             model_name=config.embedding.model_name, random=(condition == "random")
-        )
-        trained_model_settings = embedding_report[condition].embedding_settings       
+        )     
         logger.info(
             """
             \n
@@ -462,17 +461,19 @@ def _stage_train_eval_nces(
         except Exception as e:
             logger.error("Failed to get CSV dimension: %s", e)
             raise
+        trained_model_evaluate_nces_input = paths.nces_eval_model_input_dir(condition)
+        trained_model_train_nces_output = paths.nces_suffix_dir(condition)
         training = train_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
-            trained_models_dir=embeddings_file_path.parent,
+            trained_models_dir=trained_model_train_nces_output,
             train_data=train_data,
             settings=config.nces,
             m=csv_dim,
         )
         _write_json(
             payload=training.to_dict(),
-            path=paths.nces_data_dir / f"nces_training_stats_{condition}.json",
+            path=trained_model_train_nces_output / f"nces_training_stats_{condition}.json",
         )
         logger.info(
             """
@@ -482,11 +483,11 @@ def _stage_train_eval_nces(
             --------------------------------------------------------------------
             \n
             """
-        )
+        ) 
         evaluation = evaluate_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
-            trained_models_dir=embeddings_file_path.parent,
+            trained_models_dir=trained_model_evaluate_nces_input,
             problems=split["test"],
             settings=config.nces,
             knowledge_base=knowledge_base,
@@ -494,7 +495,7 @@ def _stage_train_eval_nces(
             target_extensions=target_extensions,
             split_name="test",
             m=csv_dim,
-            trained_model_settings=trained_model_settings,
+            trained_model_settings=embedding_report[condition].embedding_settings,
         )
         conditions[condition] = evaluation
     return SingleRunResult(
