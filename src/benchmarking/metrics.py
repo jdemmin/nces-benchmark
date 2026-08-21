@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from src.data.complexity import Complexity
+from src.data.results import EmbeddingResult, LearningProblemResult, MeanMetricsResult
 
 
 @dataclass(frozen=True)
@@ -58,22 +59,6 @@ def compute_lift(f1: float, complexity: Complexity) -> float | None:
         return None
     return f1 - complexity.hardness.atomic_baseline_f1
 
-
-def summarize_by_complexity(results: Sequence[dict]) -> dict[str, dict]:
-    """Aggregate metrics along every complexity axis."""
-    summary: dict[str, dict] = {}
-    scored = [r for r in results if "error" not in r]
-
-    for axis_name, key_fn in COMPLEXITY_AXES.items():
-        buckets: dict[str, list[dict]] = {}
-        for result in scored:
-            complexity = Complexity.from_dict(result["complexity"])
-            buckets.setdefault(str(key_fn(complexity)), []).append(result)
-        summary[axis_name] = {
-            bucket: _aggregate(entries) for bucket, entries in sorted(buckets.items(), key=lambda kv: _bucket_sort_key(kv[0]))
-        }
-    return summary
-
 def calculate_metrics(
     predicted: Collection[str],
     target: Collection[str],
@@ -114,26 +99,63 @@ def _ratio(numerator: float, denominator: float) -> float:
     return float(numerator) / float(denominator) if denominator else 0.0
 
 
-def _aggregate(group: list[dict[str, Any]]) -> dict[str, float | int]:
-    """Aggregate metrics over a single bucket of scored results."""
-    return {
-        "count": len(group),
-        "mean_f1": _mean(group, "f1"),
-        "mean_accuracy": _mean(group, "accuracy"),
-        "mean_precision": _mean(group, "precision"),
-        "mean_recall": _mean(group, "recall"),
-        "mean_jaccard": _mean(group, "jaccard"),
-        "semantic_equivalence_rate": _mean(group, "semantic_equivalence"),
+def mean_embeddings_results(reports: Sequence[EmbeddingResult]) -> MeanMetricsResult:
+    """Compute the mean of the metrics across multiple embedding results."""
+    keys = {
+        "mean_accuracy": 0.0,
+        "mean_precision": 0.0,
+        "mean_recall": 0.0,
+        "mean_f1_score": 0.0,
+        "mean_jaccard": 0.0,
+        "mean_semantic_equivalence": 0.0,
+        "mean_intersection": 0.0,
+        "mean_union": 0.0,
+        "mean_lift": 0.0,
     }
+    for entry in reports:
+        metric = entry.mean_metrics if entry.mean_metrics else None
+        if metric is None:
+            continue
+        for key in keys:
+            keys[key] += getattr(metric, key, 0.0)
+    for key in keys:
+        keys[key] /= len(reports) if reports else 1
+    return MeanMetricsResult(
+        mean_accuracy=keys["mean_accuracy"],
+        mean_precision=keys["mean_precision"],
+        mean_recall=keys["mean_recall"],
+        mean_f1_score=keys["mean_f1_score"],
+        mean_jaccard=keys["mean_jaccard"],
+        mean_semantic_equivalence=keys["mean_semantic_equivalence"],
+        mean_intersection=keys["mean_intersection"],
+        mean_union=keys["mean_union"],
+        mean_lift=keys["mean_lift"]
+    )
 
-
-def _mean(records: list[dict[str, Any]], key: str) -> float:
-    values = [float(record.get(key, 0.0)) for record in records]
+def _mean(records: list[LearningProblemResult], key: str) -> float:
+    """
+    Compute the mean of a numeric key in a list of LearningProblemResults.
+    Ignores missing keys.
+    """
+    values = []
+    for entry in records:
+        entry = getattr(entry.metrics, key, None)
+        if entry is not None:
+            values.append(float(entry))
     return sum(values) / len(values) if values else 0.0
 
-def _bucket_sort_key(key: str) -> tuple[int, float | str]:
-    """Sort numeric buckets numerically, string buckets lexicographically."""
-    try:
-        return (0, float(key))
-    except ValueError:
-        return (1, key)
+def _meanSemanticEquivalence(items: list[LearningProblemResult]) -> float:
+    """
+    Compute the mean of the semantic_equivalence metric in a list of LearningProblemResults.
+    Ignores missing keys.
+    """
+    if items is None or len(items) == 0:
+        return 0.0
+    value: int = 0
+    for entry in items:
+        if (
+            entry.metrics is not None
+            and entry.metrics.semantic_equivalence
+        ):
+            value += 1
+    return value / len(items)

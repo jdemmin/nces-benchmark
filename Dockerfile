@@ -40,7 +40,7 @@ COPY input/ ./input/
 COPY tests/ ./tests/
 COPY datasets/ ./datasets/
 
-RUN mkdir -p /app/Output
+RUN mkdir -p /app/output
 
 ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "nces-benchmark", "nces-benchmark"]
 CMD ["--help"]

@@ -73,7 +73,7 @@ jobs:
     name: Smoke-test benchmark run
     runs-on: ubuntu-latest
     needs: build-and-test
-    timeout-minutes: 60
+    timeout-minutes: 15
     # Requires a knowledge base in datasets/; skip if only .gitkeep is present.
     steps:
       - name: Check out repository
@@ -116,7 +116,7 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
             --datasets semantic_bible --seeds 1 \
             --num-problems 8 --dice-epochs 2 --nces-epochs 5 \
-            --benchmark-name ci_smoke
+            --benchmark-name ci_smoke --hpo-backend grid
 
       - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v4

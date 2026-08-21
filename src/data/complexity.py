@@ -116,22 +116,7 @@ class Complexity:
         return self.hardness.atomic_baseline_f1 is not None
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any] | int) -> Complexity:
-        """Deserialize, accepting both schema v1 and v2.
-
-        A bare integer is a v1 ``complexity`` and is read as a DL length with
-        every other field unknown.
-        """
-        if isinstance(payload, int):
-            return cls(
-                dl_length=payload,
-                depth=0,
-                constructors={},
-                num_atomic_classes=0,
-                num_roles=0,
-                expressivity="unknown",
-                hardness=Hardness.get_blank_hardness(),
-            )
+    def from_dict(cls, payload: dict[str, Any]) -> Complexity:
         return cls(
             dl_length=int(payload["dl_length"]),
             depth=int(payload.get("depth", 0)),

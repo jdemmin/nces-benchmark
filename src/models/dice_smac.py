@@ -190,6 +190,7 @@ def run_smac_search(
     counter = {"index": 0}
 
     configspace = build_configuration_space(settings, seed=seed)
+    logger.info("SMAC: Built config.")
 
     consecutive = {"unscored": 0}
     # SMAC swallows target-function exceptions and records them as crashed
@@ -200,6 +201,21 @@ def run_smac_search(
         record["cost"] = CRASH_COST
         _write_trial_record(embeddings_dir, record["trial"], record)
         trials.append(record)
+        error_text = str(record.get("error", "")).lower()
+        if "no space left on device" in error_text or "shared memory" in error_text:
+            logger.error(
+                "SMAC trial %d failed with a shared-memory error: %s",
+                record["trial"],
+                error_text,
+            )
+            # Not a bad region of the search space. the host is
+            # misconfigured. Resampling cannot escape it.
+            aborted["reason"] = (
+                "A trial exhausted /dev/shm. Raise Docker's --shm-size "
+                "(default 64MB is too small for torch tensor IPC) or set "
+                "torch.multiprocessing.set_sharing_strategy('file_system')."
+            )
+            return CRASH_COST
         consecutive["unscored"] += 1
         if consecutive["unscored"] >= MAX_CONSECUTIVE_UNSCORED:
             # Abort rather than let SMAC spend the remaining budget: a
@@ -254,6 +270,15 @@ def run_smac_search(
         record["cost"] = cost
         record["config"] = dict(config)
         _write_trial_record(embeddings_dir, index, record)
+        logger.info(
+            "SMAC trial %d: dim=%d batch=%d lr=%.4g score=%.4f cost=%.4f",
+            index,
+            trial_settings.embedding_dim,
+            trial_settings.batch_size,
+            trial_settings.learning_rate,
+            score,
+            cost,
+        )
         return cost
     
     scenario_kwargs: dict[str, Any] = {
@@ -293,7 +318,7 @@ def run_smac_search(
     # Never set it unless a real limit is wanted.
     if _is_real_walltime_limit(settings.trial_walltime_limit):
         logger.warning(
-            "trial_walltime_limit=%s forces SMAC to run trials in a pynisher "
+            "Trial_walltime_limit=%s forces SMAC to run trials in a pynisher "
             "subprocess; per-trial records and run_dir paths will not be "
             "recoverable from the parent process.",
             settings.trial_walltime_limit,
@@ -346,6 +371,7 @@ def run_smac_search(
     # process-safe and may have been lost if the target function ran in a
     # subprocess (n_workers > 1 or trial_walltime_limit forcing pynisher).
     trials = _load_trial_records(embeddings_dir)
+    logger.info("SMAC search completed: %d trials recorded", len(trials))
     if not trials:
         # Nothing reached our closures. Either the target function ran in
         # another process (n_workers > 1, or pynisher's trial_walltime_limit

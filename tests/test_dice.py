@@ -11,7 +11,7 @@ from src.config import EmbeddingSettings
 from src.data.ontology import Triple, local_name, parse_triples
 from src.models.dice import (
     DICEE_RESERVED_PATH_TOKENS,
-    EmbeddingResult,
+    EmbeddingResultDice,
     _assert_dicee_safe_dataset_dir,
     _best_trial_run_dir,
     _entity_index_mapping,
@@ -25,12 +25,11 @@ from src.models.dice import (
 
 
 def test_embedding_result_to_dict_stringifies_path() -> None:
-    result = EmbeddingResult(
-        model_name="QMult",
+    result = EmbeddingResultDice(
+        embedding_settings=EmbeddingSettings(
+            model_name="QMult", embedding_dim=64, batch_size=32
+        ),
         embeddings_path=Path("/tmp/QMult.csv"),
-        embedding_condition="dice",
-        embedding_dim=64,
-        batch_size=32,
         score=0.5,
     )
     payload = result.to_dict()

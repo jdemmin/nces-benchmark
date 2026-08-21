@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.benchmarking.metrics import _aggregate, calculate_metrics
+from src.benchmarking.metrics import calculate_metrics
 from src.models.nces import prepare_nces_training_data
 
 
@@ -34,17 +34,17 @@ def test_empty_hypothesis_does_not_divide_by_zero() -> None:
     assert metrics.f1 == 0.0
     assert metrics.jaccard == 0.0
 
-
-def test_complexity_summary_groups_records() -> None:
-    records = [
-        {"complexity": 1, "f1": 1.0, "accuracy": 1.0, "semantic_equivalence": True},
-        {"complexity": 1, "f1": 0.0, "accuracy": 0.5, "semantic_equivalence": False},
-        {"complexity": 3, "f1": 0.5, "accuracy": 0.75, "semantic_equivalence": False},
-    ]
-    summary = _aggregate(records)
-    assert summary["count"] == 3
-    assert summary["mean_f1"] == 0.5
-    assert summary["semantic_equivalence_rate"] == 1/3
+# No complexity summary in current version
+# def test_complexity_summary_groups_records() -> None:
+#     records = [
+#         {"complexity": 1, "f1": 1.0, "accuracy": 1.0, "semantic_equivalence": True},
+#         {"complexity": 1, "f1": 0.0, "accuracy": 0.5, "semantic_equivalence": False},
+#         {"complexity": 3, "f1": 0.5, "accuracy": 0.75, "semantic_equivalence": False},
+#     ]
+#     summary = _aggregate(records)
+#     assert summary["count"] == 3
+#     assert summary["mean_f1"] == 0.5
+#     assert summary["semantic_equivalence_rate"] == 1/3
 
 
 def test_training_data_is_written_with_local_names(problems, tmp_path: Path) -> None:

@@ -1,5 +1,5 @@
 {
-  "kbs": "semantic_bible, vicodi, carcinogenesis, mutagenesis",
+  "kbs": "semantic_bible, carcinogenesis, mutagenesis",
   "num_rand_samples": 8,
   "depth": 1,
   "max_child_len": 6,

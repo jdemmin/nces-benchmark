@@ -58,9 +58,20 @@ class RunPaths:
     def nces_data_dir(self) -> Path:
         return self.nces_dir / "data"
 
+    # Might be obsolete
     @property
     def trained_models_dir(self) -> Path:
-        return self.nces_dir / "models"
+        return self.nces_dir / "trained_models"
+
+    def trained_model_dir_by_suffix(self, suffix: str) -> Path:
+        return self.trained_models_dir / suffix
+
+    def nces_suffix_dir(self, suffix: str) -> Path:
+        return self.nces_dir / suffix
+
+    @property
+    def nces_results_dir(self) -> Path:
+        return self.nces_dir / "results"
 
     @property
     def logs_dir(self) -> Path:
@@ -89,7 +100,7 @@ class RunPaths:
         for directory in (
             self.embeddings_data_dir,
             self.nces_data_dir,
-            self.trained_models_dir,
+            self.nces_results_dir,
             self.logs_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)

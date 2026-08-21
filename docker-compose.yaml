@@ -1,26 +1,15 @@
 # docker-compose.yml
 services:
   benchmark:
+    shm_size: '8gb'
     build: .
     image: nces-benchmark-v2:latest
     container_name: nces-benchmark-v2-linux
     volumes:
       - ./datasets:/app/datasets:ro
-      - ./input:/app/input/smoke2:ro
-      - ./output:/app/output/docker-compose-smoke
+      - ./input:/app/input:ro
+      - ./output:/app/output:rw
     # DICE + NCES are CPU-bound; cap threads to keep runs reproducible.
     environment:
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
-    #command:
-    #  - --benchmark-name
-    #  - docker-compose
-    #  - --datasets
-    #  - semantic_bible
-    #  - --embedding-conditions
-    #  - random
-    #  - dice
-    #  - --hpo-backend
-    #  - smac
-    #  - --seed
-    #  - "42"

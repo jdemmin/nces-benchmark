@@ -79,12 +79,6 @@ class TestComplexitySerialization:
         original = structural_complexity("male ⊓ ∃ hasChild.person")
         assert Complexity.from_dict(original.to_dict()) == original
 
-    def test_v1_integer_is_read_as_dl_length(self):
-        complexity = Complexity.from_dict(4)
-        assert complexity.dl_length == 4
-        assert complexity.expressivity == "unknown"
-        assert complexity.is_annotated is False
-
     def test_structural_complexity_is_not_annotated(self):
         assert structural_complexity("male").is_annotated is False
 

@@ -7,7 +7,7 @@ import json
 import logging
 import random
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -82,12 +82,21 @@ def grid_search(
         ):
             best = (score, trial_settings, report, validation_error)
     if best is None:
-        raise RuntimeError(
-            "Every DICE hyperparameter trial failed; see search_trials for details."
+        msg = (
+            "GridSearch: Every DICE hyperparameter trial failed;"
+            "see search_trials for details."
         )
+        logger.error(msg)
+        raise RuntimeError(msg)
     _, best_settings, best_report, best_validation_error = best
+    best_run_dir = _best_trial_run_dir(trials, best_settings)
     logger.info(
-        "Selected DICE configuration dim=%d batch=%d (score=%.4f)",
+        "GridSearch: evaluated best DICE hyperparameters: %s. Located at %s",
+        best_settings.to_dict(),
+        best_run_dir,
+    )
+    logger.info(
+        "GridSearch: Selected DICE configuration dim=%d batch=%d (score=%.4f)",
         best_settings.embedding_dim,
         best_settings.batch_size,
         best[0],
@@ -97,7 +106,7 @@ def grid_search(
         best_report=best_report,
         trials=trials,
         validation_error=best_validation_error,
-        best_run_dir=_best_trial_run_dir(trials, best_settings),
+        best_run_dir=best_run_dir,
     )
 
     
@@ -125,30 +134,31 @@ class MRRNotFound(Enum):
         NoMRR = "No MRR metric was reported by DICE."
 
 @dataclass
-class EmbeddingResult:
-    """Outcome of one DICE embedding-training workflow."""
+class EmbeddingResultDice:
+    """
+    Outcome of one DICE embedding-training workflow.
+    Note, this class is ``NOT`` to be confused with
+    EmbeddingResult, which is a more general class
+    that represents the mean result of a single
+    embedding evaluated by NCES across multiple
+    learning problems.
+    """
 
-    model_name: str
-    embeddings_path: Path
-    embedding_condition: str
-    embedding_dim: int
-    batch_size: int
+    embedding_settings: EmbeddingSettings
     score: float | None = None
     metrics: dict[str, Any] = field(default_factory=dict)
     search_trials: list[dict[str, Any]] = field(default_factory=list)
     validation_error: str | None = None
+    embeddings_path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "model_name": self.model_name,
-            "embeddings_path": str(self.embeddings_path),
-            "embedding_condition": self.embedding_condition,
-            "embedding_dim": self.embedding_dim,
-            "batch_size": self.batch_size,
+            "embedding_settings": asdict(self.embedding_settings),
             "score": self.score,
             "metrics": self.metrics,
             "search_trials": self.search_trials,
             "validation_error": self.validation_error,
+            "embeddings_path": str(self.embeddings_path) if self.embeddings_path else None,
         }
 
 #: dicee's ReadFromDisk does substring matching on full glob paths.
@@ -184,13 +194,15 @@ def _assert_dicee_safe_dataset_dir(directory: Path) -> None:
     parent = str(directory.resolve().parent).lower()
     offenders = [t for t in DICEE_RESERVED_PATH_TOKENS if t in parent]
     if offenders:
-        raise ValueError(
+        msg = (
             f"The DICE dataset directory {directory} has ancestor path "
             f"segments containing {offenders}. dicee matches these as "
             f"substrings of the full path and would route valid.txt and "
             f"test.txt into the training set. Choose a benchmark name or "
             f"output directory without these tokens."
         )
+        logger.error(msg)
+        raise ValueError(msg)
 
 def stage_dicee_dataset(data_dir: Path, staging_root: Path) -> Path:
     """Copy the split files into a dicee-safe directory.
@@ -203,6 +215,14 @@ def stage_dicee_dataset(data_dir: Path, staging_root: Path) -> Path:
     staged.mkdir(parents=True, exist_ok=True)
     for name in ("train", "valid", "test"):
         shutil.copyfile(data_dir / f"{name}.txt", staged / f"{name}.txt")
+    logger.info(
+        "Staged DICE dataset from %s to %s (train=%d, valid=%d, test=%d)",
+        data_dir,
+        staged,
+        len(list((data_dir / "train.txt").open())),
+        len(list((data_dir / "valid.txt").open())),
+        len(list((data_dir / "test.txt").open())),
+    )
     return staged
 
 def write_dicee_dataset(
@@ -378,17 +398,6 @@ def export_entity_embeddings(
 
     names, positions = _entity_index_mapping(model)
     matrix = _entity_embedding_matrix(model)[positions]
-
-    # Not necessary anymore: NCES now reads out the CSV width.
-    #if expected_dim is not None and matrix.shape[1] != expected_dim:
-    #    raise ValueError(
-    #        f"DICE exported {matrix.shape[1]}-dimensional entity embeddings "
-    #        f"but NCES expects {expected_dim}. Multi-component models "
-    #        f"(Keci, ComplEx, QMult, OMult, DualE) widen the stored matrix; "
-    #        f"set embedding.embedding_dim so the exported width matches "
-    #        f"nces.embedding_dim."
-    #    )
-
     frame = pd.DataFrame(
         matrix,
         index=[str(name) for name in names],
@@ -453,7 +462,7 @@ def build_embeddings(
     seed: int,
     embedding_conditions: Sequence[str],
     expected_dim: int,
-) -> dict[str, EmbeddingResult]:
+) -> dict[str, EmbeddingResultDice]:
     """Run the full embedding stage for every requested condition.
 
     The ``dice`` condition trains the hyperparameter grid and exports the best
@@ -466,7 +475,7 @@ def build_embeddings(
     entity_names = sorted(
         {triple.subject for triple in triples} | {triple.object for triple in triples}
     )
-    results: dict[str, EmbeddingResult] = {}
+    results: dict[str, EmbeddingResultDice] = {}
     chosen = embedding_settings
 
     if "dice" in embedding_conditions:
@@ -476,13 +485,11 @@ def build_embeddings(
         chosen = best
         output_path = embeddings_dir / f"{best.model_name}.csv"
         export_entity_embeddings(run_dir, output_path, expected_dim=expected_dim)
+        # _cleanup_run_dir(run_dir)
+        logger.info("Cleaned up DICE run directory %s after exporting embeddings", run_dir)
         score, _ = _selection_score(report)
-        results["dice"] = EmbeddingResult(
-            model_name=best.model_name,
-            embeddings_path=output_path,
-            embedding_condition="dice",
-            embedding_dim=best.embedding_dim,
-            batch_size=best.batch_size,
+        results["dice"] = EmbeddingResultDice(
+            embedding_settings=best,
             score=score,
             metrics={
                 section: report[section]
@@ -491,6 +498,15 @@ def build_embeddings(
             },
             search_trials=trials,
             validation_error=validation_error,
+            embeddings_path=output_path,
+        )
+        logger.info(""
+            "DICE embedding completed: %d entities, dim=%d, score=%.4f, "
+            "validation_error=%s",
+            len(entity_names),
+            best.embedding_dim,
+            score,
+            validation_error,
         )
 
     if "random" in embedding_conditions:
@@ -498,7 +514,7 @@ def build_embeddings(
         # Match the exported DICE width, not the configured dimension: some
         # models store several components per dimension.
         baseline_dim = (
-            results["dice"].embedding_dim
+            results["dice"].embedding_settings.embedding_dim
             if "dice" in results
             else chosen.embedding_dim
         )
@@ -508,12 +524,14 @@ def build_embeddings(
             embedding_dim=baseline_dim,
             seed=seed,
         )
-        results["random"] = EmbeddingResult(
-            model_name=chosen.model_name,
+        results["random"] = EmbeddingResultDice(
+            embedding_settings=chosen,
             embeddings_path=output_path,
-            embedding_condition="random",
-            embedding_dim=chosen.embedding_dim,
-            batch_size=chosen.batch_size,
+        )
+        logger.info(
+            "Random embedding baseline completed: %d entities, dim=%d",
+            len(entity_names),
+            baseline_dim,
         )
 
     report_path = embeddings_dir / "embedding_report.json"
@@ -546,12 +564,13 @@ def _entity_embedding_matrix(model: Any) -> np.ndarray:
         table = getattr(inner, attribute, None)
         if isinstance(table, torch.nn.Embedding):
             return table.weight.detach().cpu().numpy()
-
-    raise AttributeError(
+    msg = (
         f"Could not locate the entity-embedding table on "
         f"{type(inner).__name__}. Supported attribute names: "
         f"entity_embeddings, emb_ent_real, entity_embedding."
     )
+    logger.error(msg)
+    raise AttributeError(msg)
 
 
 def _entity_index_mapping(model: Any) -> tuple[list[str], list[int]]:
@@ -567,6 +586,13 @@ def _entity_index_mapping(model: Any) -> tuple[list[str], list[int]]:
 def get_csv_dimension(embeddings_path: Path) -> int:
     """Return the number of columns in the CSV file at ``embeddings_path``."""
     import pandas as pd
-
-    frame = pd.read_csv(embeddings_path, index_col=0)
+    try:
+        frame = pd.read_csv(embeddings_path, index_col=0)
+    except FileNotFoundError:
+        from os import listdir
+        logger.error(
+            f"Embeddings CSV {embeddings_path} is empty."
+            f"Current content: {listdir(embeddings_path.parent)}"
+        )
+        raise FileNotFoundError(f"Embeddings CSV {embeddings_path} is empty.")
     return frame.shape[1]
