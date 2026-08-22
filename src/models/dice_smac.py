@@ -22,6 +22,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from random import Random
 from typing import TYPE_CHECKING, Any
 
 from src.config import EmbeddingSettings
@@ -245,7 +246,7 @@ def run_smac_search(
             "scoring_technique": trial_settings.scoring_technique,
             "run_dir": str(run_dir),
         }
-
+        record["config"] = dict(config)
         try:
             report = train_fn(dataset_dir, run_dir, trial_settings)
         except Exception as error:  # noqa: BLE001 - one trial must not kill the run
@@ -333,7 +334,10 @@ def run_smac_search(
     # compromise for expensive objectives.
     initial_design = HyperparameterOptimizationFacade.get_initial_design(
         scenario,
-        n_configs=max(2, settings.n_trials // 4),
+        # +1 because use_default_config appends the default as an
+        # additional_config, and AbstractInitialDesign raises if
+        # n_configs + len(additional_configs) > n_trials.
+        n_configs=max(0, min(settings.n_trials // 4, settings.n_trials - 1)),
     )
 
     smac = HyperparameterOptimizationFacade(
@@ -392,11 +396,11 @@ def run_smac_search(
             )
 
     evaluated = {
-        _config_key(r["config"]): r
+        _config_key(r["config"], seed): r
         for r in trials
         if r.get("cost", CRASH_COST) < CRASH_COST
     }
-    best_key = _config_key(incumbent)
+    best_key = _config_key(incumbent, seed)
     best = evaluated.get(best_key, None)
     if best is None:
         # The incumbent was not scorable (all trials crashed, or SMAC
@@ -421,15 +425,16 @@ def run_smac_search(
     tmp_settings = tmp_settings.with_overrides(
         embedding_dim=int(best["embedding_dim"]),
         batch_size=int(best["batch_size"]),
-        epochs=int(best["epochs"]),
+        epochs=int(best.get("epochs", -1)),
         learning_rate=float(best["learning_rate"]),
+        scoring_technique=str(best["scoring_technique"]),
     )
     return SmacSearchOutcome(
         best_settings=tmp_settings,
         best_report=best["metrics"],
         best_run_dir=Path(best["run_dir"]),
         trials=trials,
-        validation_error=best["validation_error"],
+        validation_error=best.get("validation_error", None),
         incumbent_cost=float(best["cost"]),
     )
 
@@ -468,8 +473,11 @@ def _run_dir_for(embeddings_dir: Path, settings: EmbeddingSettings,
     ).hexdigest()[:10]
     return embeddings_dir / f"trial_{digest}_{settings.model_name}"
 
-def _config_key(config: Configuration) -> tuple[tuple[str, Any], ...]:
-    return tuple(sorted(dict(config).items()))
+def _config_key(config: Configuration, seed: int) -> tuple[tuple[str, Any], ...]:
+    items = list(dict(config).items())
+    items = sorted(items)
+    Random(seed).shuffle(items)
+    return tuple(items)
 
 def _diagnose_total_failure(trials: list[dict[str, Any]]) -> str:
     """Build an actionable message for a search where no trial scored.
