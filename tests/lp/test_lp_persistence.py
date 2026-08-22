@@ -1,3 +1,4 @@
+# tests/lp/test_lp_persistence.py
 """Grouped artifact and split persistence."""
 
 from __future__ import annotations
@@ -5,10 +6,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.data.lp import load_learning_problems, save_learning_problems, save_split
-from src.data.lp import LearningProblem
-
 from test_lp_schema import blank_complexity, make_problem
+
+from src.data.lp import (
+    LearningProblem,
+    load_learning_problems,
+    save_learning_problems,
+    save_split,
+)
+
 
 def test_grouping_key_is_dl_length(tmp_path: Path) -> None:
     problems = [

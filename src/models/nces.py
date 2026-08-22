@@ -124,16 +124,13 @@ def train_nces(
         load_pretrained=False,
         m=m,
     )
-
     logger.info(
         "Training NCES %s for %d epochs on %d learning problems",
         settings.learner_name,
         settings.epochs,
         len(train_data),
     )
-    logger.info(
-        "Starting NCES training."
-        )
+    logger.info("Starting NCES training.")
     started = time.perf_counter()
     degraded = False
     try:
@@ -162,7 +159,6 @@ def train_nces(
             trained_models_dir / f"trained_{settings.learner_name}.pt",
         )
     runtime = time.perf_counter() - started
-
     return NCESStats(
         learner_name=settings.learner_name,
         runtime_seconds=round(runtime, 3),
@@ -178,8 +174,11 @@ def _save_final_weights(model, trained_models_dir: Path, settings: NCESSettings)
 
     models_dir = trained_models_dir
     models_dir.mkdir(parents=True, exist_ok=True)
-
-    learners = model.model if isinstance(model.model, dict) else {settings.learner_name: model.model}
+    learners = (
+        model.model 
+        if isinstance(model.model, dict) 
+        else {settings.learner_name: model.model}
+    )
     for learner_name, module in learners.items():
         net = module["model"] if isinstance(module, dict) else module
         net = getattr(net, "module", net)  # unwrap DataParallel
@@ -263,7 +262,8 @@ def evaluate_nces(
         started = time.perf_counter()
         try:
             predictions = model.fit(lp)
-            # returns Union type. Expect a single OWLClassExpression, so check the type and raise if not.
+            # returns Union type. Expect a single OWLClassExpression,
+            # so check the type and raise if not.
             hypothesis = (model.best_hypotheses())
             if type(hypothesis) is list and len(hypothesis) > 0:
                 hypothesis = hypothesis[0]
@@ -402,7 +402,7 @@ def _assert_model_dir_contains_needed_files(
             contents,
         )
         raise FileNotFoundError(
-            f"No trained NCES weights at {expected}; evaluation would score an "
+            f"No trained NCES weights at {expected};evaluation would score an "
             "untrained learner. "
             f"Contents: {contents}"
         )
@@ -410,15 +410,10 @@ def _assert_model_dir_contains_needed_files(
     missing_files = [f for f in expected_files
                      if not (trained_models_dir / f).exists()]
     if len(missing_files) > 0:
-        logger.error(
-            "Trained models directory %s is missing expected files: %s. "
-            "Directory contents: %s",
-            trained_models_dir,
-            missing_files,
-            list(trained_models_dir.iterdir()),
-        )
-        raise FileNotFoundError(
-            f"Trained models directory ``{trained_models_dir}``" 
-            f"is missing expected files: {missing_files}. "
+        msg = (
+            f"Trained models directory {trained_models_dir} is missing "
+            f"expected files: {missing_files}. "
             f"Directory contents: {list(trained_models_dir.iterdir())}"
         )
+        logger.error(msg)
+        raise FileNotFoundError(msg)

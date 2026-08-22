@@ -1,13 +1,14 @@
+# tests/lp/test_lp_strata_key.py
 """Strata-key resolution for stratified splitting."""
 
 from __future__ import annotations
 
 import pytest
+from test_lp_annotation import hardness
+from test_lp_schema import blank_complexity, make_problem
 
 from src.data.complexity import Hardness
 from src.data.lp import _get_strata_key
-from test_lp_annotation import hardness
-from test_lp_schema import blank_complexity, make_problem
 
 
 def test_none_problem_raises() -> None:

@@ -1,3 +1,4 @@
+# tests/lp/test_lp_schema.py
 """Learning-problem schema: construction, invariants, serialization."""
 
 from __future__ import annotations

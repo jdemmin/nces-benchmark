@@ -134,6 +134,7 @@ def structural_complexity(dl_expression: str) -> Complexity:
     normalising ``LPs.json``, whose keys are strings. Prefer
     :func:`structural_complexity_from_owl` where the parsed expression exists.
     """
+
     tokens = _tokenize(dl_expression)
 
     constructors: dict[str, int] = {}
@@ -178,6 +179,7 @@ def _expressivity(present: frozenset[str]) -> str:
 
 def _tokenize(dl_expression: str) -> list[str]:
     """Split a DL expression, keeping brackets and dots as separate tokens."""
+
     spaced = dl_expression
     for symbol in set(CONSTRUCTORS) | {"(", ")", "."}:
         spaced = spaced.replace(symbol, f" {symbol} ")
@@ -194,6 +196,7 @@ def _follows_quantifier(tokens: list[str], index: int) -> bool:
     A role is the token after a quantifier, or after a quantifier and its
     cardinality bound.
     """
+
     cursor = index - 1
     if cursor >= 0 and _is_numeral(tokens[cursor]):
         cursor -= 1
@@ -209,6 +212,7 @@ def _nesting_depth(tokens: list[str]) -> int:
     Depth increases on entering a restriction's filler and is tracked through
     bracketing, so ``∃ r.(A ⊓ ∃ s.B)`` yields 2 rather than 1.
     """
+
     max_depth = 0
     current = 0
     # Stack of bracket depths at which a quantifier scope was opened.
@@ -238,6 +242,7 @@ def structural_complexity_from_owl(expression) -> Complexity:
     Preferred over the string-based path: the tree is unambiguous, whereas
     rendered DL syntax can omit brackets that disambiguate filler scope.
     """
+
     from owlapy.class_expression import (
         OWLObjectAllValuesFrom,
         OWLObjectCardinalityRestriction,
@@ -280,10 +285,8 @@ def structural_complexity_from_owl(expression) -> Complexity:
             return walk(node.get_filler(), depth + 1)
         classes.add(str(node.get_iri()))
         return depth
-
     max_depth = walk(expression, 0)
     present = frozenset(constructors)
-
     return Complexity(
         dl_length=len(classes) + len(roles) + sum(constructors.values()),
         depth=max_depth,
@@ -304,6 +307,7 @@ def atomic_baseline_f1(
     atomic class overlaps the target at all. This is the floor a hypothesis
     must clear for its learning problem to count as non-trivially solved.
     """
+
     target = frozenset(target_extension)
     if not target:
         return 0.0, None
@@ -321,7 +325,6 @@ def atomic_baseline_f1(
         score = 2 * precision * recall / (precision + recall)
         if score > best_score:
             best_score, best_class = score, iri
-
     return best_score, best_class
 
 
@@ -338,6 +341,7 @@ def annotate_hardness(
     enter here: hardness describes the learning problem, which is held
     constant across embedding conditions.
     """
+    
     target = frozenset(target_extension)
     universe = frozenset(all_individuals)
 

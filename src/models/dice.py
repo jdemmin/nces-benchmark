@@ -8,7 +8,6 @@ import logging
 import random
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -16,122 +15,9 @@ import numpy as np
 
 from src.config import SPLIT_RATIOS, EmbeddingSettings
 from src.data.ontology import Triple, local_name, parse_triples
+from src.models.hpo_search_utils import selection_score
 
 logger = logging.getLogger(__name__)
-
-@dataclass
-class GridSearchOutcome:
-    best_settings: EmbeddingSettings
-    best_report: dict[str, Any]
-    trials: list[dict[str, Any]]
-    validation_error: str | None
-    best_run_dir: Path | None
-
-def grid_search(
-    dataset_dir: Path,
-    embeddings_dir: Path,
-    settings: EmbeddingSettings,
-    *,
-    seed: int,
-) -> GridSearchOutcome:
-    """Evaluate the hyperparameter grid and return the best trial.
-
-    Returns ``(best_settings, best_report, search_trials, validation_error)``.
-    The selection metric is validation MRR with a fallback to test MRR; a
-    trial that raises is recorded in ``search_trials`` rather than aborting
-    the benchmark run.
-    """
-    trials: list[dict[str, Any]] = []
-    best: tuple[float, EmbeddingSettings, dict[str, Any], str | None] | None = None
-    for index, trial_settings in enumerate(settings.search_grid()):
-        run_dir = embeddings_dir / f"trial_{index:02d}_{trial_settings.model_name}"
-        record: dict[str, Any] = {
-            "trial": index,
-            "model_name": trial_settings.model_name,
-            "embedding_dim": trial_settings.embedding_dim,
-            "batch_size": trial_settings.batch_size,
-        }
-        try:
-            report = train_embedding_model(
-                dataset_dir, run_dir, trial_settings, seed=seed
-            )
-        except Exception as error:  # noqa: BLE001 - one trial must not kill the run
-            logger.warning("Hyperparameter trial %d failed: %s", index, error)
-            record["error"] = str(error)
-            trials.append(record)
-            continue
-        score, validation_error = _selection_score(report)
-        record["score"] = score
-        record["validation_error"] = validation_error
-        record["metrics"] = {
-            section: report[section]
-            for section in ("Train", "Val", "Valid", "Test")
-            if isinstance(report.get(section), dict)
-        }
-        record["run_dir"] = str(run_dir)
-        trials.append(record)
-        # negates selection by insertion order
-        if score is not None and (
-            best is None
-            or score > best[0]
-            or (
-                score == best[0]
-                and (trial_settings.embedding_dim, trial_settings.batch_size)
-                < (best[1].embedding_dim, best[1].batch_size)
-            )
-        ):
-            best = (score, trial_settings, report, validation_error)
-    if best is None:
-        msg = (
-            "GridSearch: Every DICE hyperparameter trial failed;"
-            "see search_trials for details."
-        )
-        logger.error(msg)
-        raise RuntimeError(msg)
-    _, best_settings, best_report, best_validation_error = best
-    best_run_dir = _best_trial_run_dir(trials, best_settings)
-    logger.info(
-        "GridSearch: evaluated best DICE hyperparameters: %s. Located at %s",
-        best_settings.to_dict(),
-        best_run_dir,
-    )
-    logger.info(
-        "GridSearch: Selected DICE configuration dim=%d batch=%d (score=%.4f)",
-        best_settings.embedding_dim,
-        best_settings.batch_size,
-        best[0],
-    )
-    return GridSearchOutcome(
-        best_settings=best_settings,
-        best_report=best_report,
-        trials=trials,
-        validation_error=best_validation_error,
-        best_run_dir=best_run_dir,
-    )
-
-    
-def _best_trial_run_dir(
-    trials: Sequence[dict[str, Any]], best: EmbeddingSettings
-) -> Path:
-    """Locate the stored run directory belonging to the winning trial."""
-    for record in trials:
-        if (
-            record.get("embedding_dim") == best.embedding_dim
-            and record.get("batch_size") == best.batch_size
-            and "run_dir" in record
-        ):
-            return Path(record["run_dir"])
-    raise RuntimeError("Could not locate the run directory of the best trial.")
-
-class MRRNotFound(Enum):
-        ValidationUnavailable = "Validation MRR unavailable. used test MRR."
-        TrainOnly = (
-            "Only train MRR was available; refusing to select on it "
-            "(train MRR rewards memorization). Check that valid.txt/"
-            "test.txt are discovered by dicee and that eval_model="
-            "'train_val_test' took effect."
-        )
-        NoMRR = "No MRR metric was reported by DICE."
 
 @dataclass
 class EmbeddingResultDice:
@@ -165,23 +51,6 @@ class EmbeddingResultDice:
 DICEE_RESERVED_PATH_TOKENS: tuple[str, ...] = ("train", "valid", "test")
 
 
-def _selection_score(report: dict[str, Any]) -> tuple[float | None, str | None]:
-    """Extract the selection metric: validation MRR, then test MRR.
-    Returns ``(score, validation_error)``.
-    """
-    for key in ("Val", "Valid", "Validation"):
-        section = report.get(key)
-        if isinstance(section, dict) and "MRR" in section:
-            return float(section["MRR"]), None
-
-    test = report.get("Test")
-    if isinstance(test, dict) and "MRR" in test:
-        return float(test["MRR"]), MRRNotFound.ValidationUnavailable.value
-    train = report.get("Train")
-    if isinstance(train, dict) and "MRR" in train:
-        return None, MRRNotFound.TrainOnly.value
-    return None, MRRNotFound.NoMRR.value
-
 def _assert_dicee_safe_dataset_dir(directory: Path) -> None:
     """Reject dataset directories dicee would mis-parse.
 
@@ -191,6 +60,7 @@ def _assert_dicee_safe_dataset_dir(directory: Path) -> None:
     every split file into ``raw_train_set``, leaving validation and test
     unset and the eval report train-only.
     """
+
     parent = str(directory.resolve().parent).lower()
     offenders = [t for t in DICEE_RESERVED_PATH_TOKENS if t in parent]
     if offenders:
@@ -237,12 +107,11 @@ def write_dicee_dataset(
     DICE consumes tab-separated triple files from a dataset directory. The
     split is deterministic in ``seed`` so a benchmark run is reproducible.
     """
+
     if not triples:
         raise ValueError("Cannot build a DICE dataset from zero triples.")
 
-    # dicee's ReadFromDisk matches 'train'/'valid'/'test' as substrings of
-    # the *full* glob path, so any of those words in an ancestor directory
-    # silently misroutes every split file. See KNOWN_ISSUES.md.
+    # See KNOWN_ISSUES.md.
     _assert_dicee_safe_dataset_dir(directory)
 
     directory.mkdir(parents=True, exist_ok=True)
@@ -295,9 +164,6 @@ def train_embedding_model(
 
     run_dir.parent.mkdir(parents=True, exist_ok=True)
 
-    # TODO: dice does not use the given dataset_dir as intended.
-    # It does not consider validation/test files in the given
-    # directory... but why???
     args = Namespace()
     args.model = settings.model_name
     args.dataset_dir = str(dataset_dir)
@@ -326,8 +192,6 @@ def train_embedding_model(
     return dict(report)
 
 
-
-
 def search_best_embedding_setting(
     dataset_dir: Path,
     embeddings_dir: Path,
@@ -346,6 +210,7 @@ def search_best_embedding_setting(
     ``"grid"`` keeps the original exhaustive grid so results predating the
     switch stay reproducible.
     """
+
     outcome: Any
     if settings.hpo_backend == "smac":
         from src.models.dice_smac import run_smac_search
@@ -360,9 +225,10 @@ def search_best_embedding_setting(
                     data_dir, run_dir, trial_settings, seed=seed
                 )
             ),
-            score_fn=_selection_score,
+            score_fn=selection_score,
         )
     else:
+        from src.models.dice_grid_search import grid_search
         outcome = grid_search(
             dataset_dir, embeddings_dir, settings, seed=seed
         )
@@ -487,7 +353,7 @@ def build_embeddings(
         export_entity_embeddings(run_dir, output_path, expected_dim=expected_dim)
         # _cleanup_run_dir(run_dir)
         logger.info("Cleaned up DICE run directory %s after exporting embeddings", run_dir)
-        score, _ = _selection_score(report)
+        score, _ = selection_score(report)
         results["dice"] = EmbeddingResultDice(
             embedding_settings=best,
             score=score,
@@ -513,11 +379,7 @@ def build_embeddings(
         output_path = embeddings_dir / f"{chosen.model_name}_random.csv"
         # Match the exported DICE width, not the configured dimension: some
         # models store several components per dimension.
-        baseline_dim = (
-            results["dice"].embedding_settings.embedding_dim
-            if "dice" in results
-            else chosen.embedding_dim
-        )
+        baseline_dim = get_csv_dimension(embeddings_dir / f"{chosen.model_name}.csv")
         generate_random_embeddings(
             entity_names,
             output_path,
@@ -586,6 +448,7 @@ def _entity_index_mapping(model: Any) -> tuple[list[str], list[int]]:
 def get_csv_dimension(embeddings_path: Path) -> int:
     """Return the number of columns in the CSV file at ``embeddings_path``."""
     import pandas as pd
+    
     try:
         frame = pd.read_csv(embeddings_path, index_col=0)
     except FileNotFoundError:

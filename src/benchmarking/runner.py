@@ -140,6 +140,7 @@ def run_single(
     benchmark_name: str,
 ) -> SingleRunResult:
     """Execute one benchmark run: one (knowledge base, seed) pair."""
+
     kb_path = resolve_knowledge_base(knowledge_base_name)
     paths = run_paths(
         benchmark_name,
@@ -258,6 +259,7 @@ def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
     two problems is handed entirely to train -- so this is the signal for
     whether the configured ``stratify_by`` axis is viable.
     """
+
     axes: dict[str, dict[str, int]] = {
         "dl_length": {},
         "depth": {},
@@ -287,6 +289,7 @@ def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
 
 def _order_embedding_conditions(embedding_conditions: list[str]) -> None:
     """Ensure that 'random' is always the last embedding condition."""
+
     if "random" == embedding_conditions[0] and len(embedding_conditions) > 1:
         embedding_conditions.remove("random")
         embedding_conditions.append("random")
@@ -312,6 +315,7 @@ def _embedding_stage(
     Creates a temporary data directory to avoid triggering dicee path checks.
     Copies the embeddings to the run's embeddings directory so nothing is lost.
     """
+
     report = build_embeddings(
             kb_path=kb_path,
             embeddings_dir=paths.embeddings_dir,
@@ -333,6 +337,7 @@ def _write_json(payload: dict[str, Any], path: Path) -> None:
 
 def _stage_parse_ontology(kb_path: Path) -> OntologyParseResult:
     """Parse the ontology and return triples and individual IRIs."""
+
     triples = parse_triples(kb_path)
     knowledge_base = load_knowledge_base(kb_path)
     all_individuals = individual_iris(knowledge_base)
@@ -352,6 +357,7 @@ def _stage_hardness_annotation(
     Annotate hardness for learning problems
     and return annotated problems and unparsed targets.
     """
+
     atomic_extensions = compute_atomic_class_extensions(knowledge_base)
     universe = frozenset(all_individuals)
     target_extensions: dict[str, frozenset[str]] = {}
@@ -360,8 +366,8 @@ def _stage_hardness_annotation(
     for problem in problems:
         extension = concept_extension(knowledge_base, problem.target_concept)
         if not extension:
-            # Same fallback the evaluation stage uses: sampled positives as
-            # IRI strings. Must not be OWL objects -- they never compare
+            # Same fallback the evaluation stage uses. Sampled positives as
+            # IRI strings. Must not be OWL objects - they never compare
             # equal to the IRI strings in atomic_extensions, which would
             # silently zero out every hardness field.
             extension = frozenset(problem.pos_example)
@@ -399,6 +405,7 @@ def _stage_train_eval_nces(
     Train and evaluate NCES for each embedding condition.
     Writes NCES stats.
     """
+    
     train_data = prepare_nces_training_data(
         split["train"], paths.nces_data_dir / "nces_train_data.json"
     )

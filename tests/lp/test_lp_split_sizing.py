@@ -1,11 +1,12 @@
+# tests/lp/test_lp_split_sizing.py
 """Split sizing arithmetic and edge cases."""
 
 from __future__ import annotations
 
 import pytest
+from test_lp_schema import blank_complexity, make_problem
 
 from src.data.lp import split_learning_problems
-from test_lp_schema import blank_complexity, make_problem
 
 
 def population(n: int, *, depth: int = 0):

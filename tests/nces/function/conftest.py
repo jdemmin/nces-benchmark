@@ -1,4 +1,4 @@
-# tests/conftest.py
+# tests/nces/function/conftest.py
 """Shared fixtures.
 
 The NCES tests install fake third-party modules into ``sys.modules``. Every

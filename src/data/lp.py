@@ -111,6 +111,7 @@ class LearningProblem(LearningProblemTruncated):
         NCES indexes its embedding matrix by local name, so IRIs are reduced
         here rather than inside the learner.
         """
+
         return (
             self.target_concept,
             {
@@ -208,6 +209,7 @@ def _normalise(
     raw: Iterable[Any], *, namespace: str
 ) -> list[LearningProblem]:
     """Convert ontolearn's ``LPs.json`` payload into learning problems."""
+
     entries: list[tuple[str, dict[str, Any]]]
     if isinstance(raw, dict):
         entries = list(raw.items())
@@ -235,6 +237,7 @@ def _normalise(
 
 def _expand(names: Sequence[str], namespace: str) -> list[str]:
     """Expand local names back into full IRIs where possible."""
+
     expanded = []
     for name in names:
         if name.startswith(("http://", "https://")):
@@ -248,6 +251,7 @@ def save_learning_problems(
     problems: Sequence[LearningProblem], path: Path
 ) -> None:
     """Serialize learning problems grouped by complexity level."""
+
     grouped: dict[str, list[dict[str, Any]]] = {}
     for problem in problems:
         # Grouping by DL-expression length is a coarse proxy for difficulty,
@@ -262,6 +266,7 @@ def save_learning_problems(
 
 def load_learning_problems(path: Path) -> list[LearningProblem]:
     """Load learning problems from the grouped JSON artifact."""
+
     with path.open(encoding="utf-8") as handle:
         grouped = json.load(handle)
     return [
@@ -275,6 +280,7 @@ def _get_strata_key(stratify_by: str | None, problem: LearningProblem) -> str:
     Return a string key for stratifying learning problems.
     Missing or invalid keys default to DL-expression length.
     """
+
     if problem is None:
         raise AttributeError("Cannot get strata key: Problem is None")
     strata_target = problem.complexity
@@ -285,7 +291,10 @@ def _get_strata_key(stratify_by: str | None, problem: LearningProblem) -> str:
     if stratify_by in Hardness.__dataclass_fields__:
         strata_target = strata_target.hardness
         invalid_strata = strata_target is None or strata_target.atomic_baseline_f1 is None
-    return str(problem.complexity.dl_length) if invalid_strata else str(getattr(strata_target, stratify_by)) # type: ignore Already validated that stratify_by is a valid field of Complexity or Hardness
+    return (str(problem.complexity.dl_length)
+            if invalid_strata 
+            else str(getattr(strata_target, stratify_by)) # type: ignore //Already validated that stratify_by is a valid field of Complexity or Hardness
+    ) 
 
 def split_learning_problems(
     problems: Sequence[LearningProblem],
@@ -306,6 +315,7 @@ def split_learning_problems(
     composition drifts across seeds, which inflates apparent variance between
     embedding conditions.
     """
+
     if not problems or len(problems) < 2:
         raise ValueError(
             f"At least two learning problems are required for a split. "
@@ -343,6 +353,7 @@ def save_split(
     split: dict[str, list[LearningProblem]], directory: Path
 ) -> None:
     """Persist each learning-problem split to its own artifact."""
+    
     directory.mkdir(parents=True, exist_ok=True)
     for name, problems in split.items():
         payload = [problem.to_dict() for problem in problems]

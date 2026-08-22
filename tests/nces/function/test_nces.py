@@ -1,4 +1,4 @@
-# tests/test_nces.py
+# tests/nces/function/test_nces.py
 """Tests for src/models/nces.py.
 
 The module under test imports ``ontolearn``, ``owlapy`` and ``torch`` lazily,
@@ -277,9 +277,7 @@ def patched_extension(monkeypatch: pytest.MonkeyPatch):
     return install
 
 
-# --------------------------------------------------------------------------- #
-# prepare_nces_training_data
-# --------------------------------------------------------------------------- #
+# --- prepare_nces_training_data -----------------------------------------
 
 
 class TestPrepareTrainingData:
@@ -381,9 +379,7 @@ class TestPrepareTrainingData:
         assert json.loads(raw)[0]["target_concept"] == concept
 
 
-# --------------------------------------------------------------------------- #
-# build_nces
-# --------------------------------------------------------------------------- #
+# --- build_nces -----------------------------------------
 
 
 class TestBuildNCES:
@@ -433,9 +429,7 @@ class TestBuildNCES:
         assert isinstance(model.kwargs["path_of_trained_models"], str)
 
 
-# --------------------------------------------------------------------------- #
-# train_nces
-# --------------------------------------------------------------------------- #
+# --- train_nces -----------------------------------------
 
 
 class TestTrainNCES:
@@ -622,9 +616,8 @@ class TestTrainNCES:
         )
 
 
-# --------------------------------------------------------------------------- #
-# evaluate_nces
-# --------------------------------------------------------------------------- #
+# --- evaluate_nces -----------------------------------------
+
 
 from src.config import EmbeddingSearchSpace
 
@@ -679,9 +672,7 @@ class TestEvaluateNCES:
             "no model should be built for an empty split"
         )
 
-    #############
-    # Guard moved to runner.py. These two tests are now redundant, but they are left here for reference.
-    #############
+
 
     def test_missing_weights_file_raises_before_scoring(
         self, tmp_path: Path, settings: NCESSettings, kb
@@ -1179,9 +1170,8 @@ class TestEvaluateNCES:
         assert report.learning_problem_results[0].hypotesis == "Inner"
 
 
-# --------------------------------------------------------------------------- #
-# helpers
-# --------------------------------------------------------------------------- #
+
+# --- helpers -----------------------------------------
 
 
 class TestHelpers:
@@ -1235,9 +1225,8 @@ class TestHelpers:
             assert _fingerprint(Empty()) == 0.0
 
 
-# --------------------------------------------------------------------------- #
-# End-to-end: prepare -> train -> evaluate
-# --------------------------------------------------------------------------- #
+
+# --- End-to-end: prepare -> train -> evaluate -----------------------------------------
 
 
 class TestPipelineIntegration:
@@ -1435,9 +1424,9 @@ class TestPipelineIntegration:
         assert report.number_of_successful_problems == 1
 
 
-# --------------------------------------------------------------------------- #
-# Report shape: the artifact downstream analysis reads
-# --------------------------------------------------------------------------- #
+
+# --- Report shape: the artifact downstream analysis reads -------------------
+
 
 
 class TestReportSchema:

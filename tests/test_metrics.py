@@ -1,4 +1,4 @@
-# tests/benchmarking/test_metrics.py
+# tests/test_metrics.py
 """Tests for extension-based hypothesis metrics."""
 
 from __future__ import annotations

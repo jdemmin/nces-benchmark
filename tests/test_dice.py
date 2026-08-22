@@ -1,4 +1,4 @@
-# tests/test_dicee.py
+# tests/test_dice.py
 from __future__ import annotations
 
 import tempfile
@@ -13,15 +13,14 @@ from src.models.dice import (
     DICEE_RESERVED_PATH_TOKENS,
     EmbeddingResultDice,
     _assert_dicee_safe_dataset_dir,
-    _best_trial_run_dir,
     _entity_index_mapping,
-    _selection_score,
     build_embeddings,
     generate_random_embeddings,
     get_csv_dimension,
     search_best_embedding_setting,
     write_dicee_dataset,
 )
+from src.models.hpo_search_utils import best_trial_run_dir, selection_score
 
 
 def test_embedding_result_to_dict_stringifies_path() -> None:
@@ -44,6 +43,7 @@ def test_random_only_condition_never_trains(
         raise AssertionError("DICE must not train for the random condition")
     tmp_path = Path(tempfile.mkdtemp())  # otherwise test prefix would trigger dicee path check
     monkeypatch.setattr("src.models.dice.train_embedding_model", explode)
+    monkeypatch.setattr("src.models.dice.get_csv_dimension", lambda *a, **k: 64)
     results = build_embeddings(
         kb_path,
         tmp_path / "clean" / "emb",
@@ -58,10 +58,12 @@ def test_random_only_condition_never_trains(
 
 
 def test_embedding_report_is_written(
-    kb_path: Path, base_settings: EmbeddingSettings
+    kb_path: Path, base_settings: EmbeddingSettings,
+    monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tmp_path = Path(tempfile.mkdtemp())  # otherwise test prefix would trigger dicee path check
     embeddings_dir = tmp_path / "clean" / "emb"
+    monkeypatch.setattr("src.models.dice.get_csv_dimension", lambda *a, **k: 64)
     build_embeddings(
         kb_path,
         embeddings_dir,
@@ -315,7 +317,7 @@ def test_best_trial_run_dir_matches_on_both_dimensions() -> None:
     best = EmbeddingSettings(
         model_name="QMult", embedding_dim=64, batch_size=32
     )
-    assert _best_trial_run_dir(trials, best) == Path("/b")
+    assert best_trial_run_dir(trials, best) == Path("/b")
 
 
 def test_best_trial_run_dir_skips_failed_records() -> None:
@@ -326,7 +328,7 @@ def test_best_trial_run_dir_skips_failed_records() -> None:
     best = EmbeddingSettings(
         model_name="QMult", embedding_dim=64, batch_size=32
     )
-    assert _best_trial_run_dir(trials, best) == Path("/ok")
+    assert best_trial_run_dir(trials, best) == Path("/ok")
 
 
 def test_missing_run_dir_raises() -> None:
@@ -334,17 +336,17 @@ def test_missing_run_dir_raises() -> None:
         model_name="QMult", embedding_dim=64, batch_size=32
     )
     with pytest.raises(RuntimeError, match="Could not locate"):
-        _best_trial_run_dir([], best)
+        best_trial_run_dir([], best)
 
 @pytest.mark.parametrize("key", ["Val", "Valid", "Validation"])
 def test_selection_accepts_every_validation_key(key: str) -> None:
-    score, error = _selection_score({key: {"MRR": 0.42}})
+    score, error = selection_score({key: {"MRR": 0.42}})
     assert score == 0.42
     assert error is None
 
 
 def test_validation_wins_over_test_even_when_lower() -> None:
-    score, error = _selection_score(
+    score, error = selection_score(
         {"Val": {"MRR": 0.1}, "Test": {"MRR": 0.9}}
     )
     assert score == 0.1
@@ -353,20 +355,20 @@ def test_validation_wins_over_test_even_when_lower() -> None:
 
 def test_train_only_report_refuses_to_score() -> None:
     """A train-only report signals the dicee path-routing bug."""
-    score, error = _selection_score({"Train": {"MRR": 1.0}})
+    score, error = selection_score({"Train": {"MRR": 1.0}})
     assert score is None
     assert "train MRR" in error
     assert "valid.txt" in error
 
 
 def test_non_dict_sections_are_ignored() -> None:
-    score, error = _selection_score({"Val": "not-a-dict", "Test": None})
+    score, error = selection_score({"Val": "not-a-dict", "Test": None})
     assert score is None
     assert "No MRR" in error
 
 
 def test_section_without_mrr_is_skipped() -> None:
-    score, error = _selection_score(
+    score, error = selection_score(
         {"Val": {"H@1": 0.5}, "Test": {"MRR": 0.3}}
     )
     assert score == 0.3
@@ -536,19 +538,19 @@ def test_empty_triples_are_rejected(tmp_path: Path) -> None:
 
 def test_selection_score_prefers_validation_mrr() -> None:
     report = {"Train": {"MRR": 0.9}, "Val": {"MRR": 0.5}, "Test": {"MRR": 0.7}}
-    score, error = _selection_score(report)
+    score, error = selection_score(report)
     assert score == 0.5
     assert error is None
 
 
 def test_selection_score_falls_back_to_test_mrr() -> None:
-    score, error = _selection_score({"Test": {"MRR": 0.7}})
+    score, error = selection_score({"Test": {"MRR": 0.7}})
     assert score == 0.7
     assert "test MRR" in error
 
 
 def test_selection_score_reports_missing_metric() -> None:
-    score, error = _selection_score({})
+    score, error = selection_score({})
     assert score is None
     assert "No MRR" in error
 

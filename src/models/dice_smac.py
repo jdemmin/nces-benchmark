@@ -144,6 +144,7 @@ def settings_from_configuration(
     base: EmbeddingSettings, config: Configuration
 ) -> EmbeddingSettings:
     """Materialize the sampled configuration as ``EmbeddingSettings``."""
+
     overrides: dict[str, Any] = {}
     values = dict(config)
     for name in (
@@ -208,7 +209,7 @@ def run_smac_search(
                 record["trial"],
                 error_text,
             )
-            # Not a bad region of the search space. the host is
+            # Not necessarily a bad region of the search space. The host is
             # misconfigured. Resampling cannot escape it.
             aborted["reason"] = (
                 "A trial exhausted /dev/shm. Raise Docker's --shm-size "
@@ -551,6 +552,7 @@ def _assert_single_worker(settings: EmbeddingSettings) -> None:
     target function into worker processes, so every one of those mutations is
     lost and concurrent trials collide on ``trial_NN_*`` directories.
     """
+    
     if settings.n_workers not in (1, None):
         raise ValueError(
             f"embedding.n_workers={settings.n_workers} is unsupported. SMAC "

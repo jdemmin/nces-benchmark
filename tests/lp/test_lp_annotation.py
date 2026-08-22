@@ -1,12 +1,13 @@
+# tests/lp/test_lp_annotation.py
 """Complexity and hardness annotation."""
 
 from __future__ import annotations
 
 import pytest
+from test_lp_schema import blank_complexity, make_problem
 
 from src.data.complexity import Complexity, Hardness
 from src.data.lp import LearningProblem
-from test_lp_schema import blank_complexity, make_problem
 
 
 def hardness(*, ratio=0.25, baseline=0.5, redundant=False) -> Hardness:

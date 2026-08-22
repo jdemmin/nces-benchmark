@@ -1,3 +1,4 @@
+# tests/lp/test_lp_normalise.py
 """Normalisation of ontolearn's LPs.json payload."""
 
 from __future__ import annotations
@@ -14,10 +15,6 @@ def payload(**problems):
         name: {"positive examples": pos, "negative examples": neg}
         for name, (pos, neg) in problems.items()
     }
-
-
-# --- _expand ---------------------------------------------------------
-
 
 def test_expand_prefixes_local_names() -> None:
     assert _expand(["stefan", "anna"], NS) == [f"{NS}stefan", f"{NS}anna"]

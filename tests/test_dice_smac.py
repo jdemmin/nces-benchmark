@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 from src.config import EmbeddingSearchSpace, EmbeddingSettings
-from src.models.dice import MRRNotFound
 from src.models.dice_smac import (
     CRASH_COST,
     MAX_CONSECUTIVE_UNSCORED,
@@ -23,6 +22,7 @@ from src.models.dice_smac import (
     run_smac_search,
     settings_from_configuration,
 )
+from src.models.hpo_search_utils import MRRNotFound
 
 smac = pytest.importorskip("smac", reason="SMAC3 is required for the HPO tests")
 
@@ -71,9 +71,8 @@ def _selection_score(report: dict[str, Any]) -> tuple[float | None, str | None]:
     return None, MRRNotFound.NoMRR.value
 
 
-# --------------------------------------------------------------------------
-# Configuration space
-# --------------------------------------------------------------------------
+
+# --- Configuration space --------------------------------------------------
 
 
 def test_configuration_space_contains_expected_hyperparameters() -> None:
@@ -124,9 +123,9 @@ def test_settings_from_configuration_casts_types() -> None:
     assert result.scoring_technique == settings.scoring_technique
 
 
-# --------------------------------------------------------------------------
-# Happy path: the search must find the optimum of a synthetic objective
-# --------------------------------------------------------------------------
+
+# --- Good path: the search must find the optimum of a synthetic objective
+
 
 
 def test_search_finds_the_best_configuration(tmp_path: Path) -> None:
@@ -223,9 +222,9 @@ def test_search_is_reproducible_for_a_fixed_seed(tmp_path: Path) -> None:
     assert first == second
 
 
-# --------------------------------------------------------------------------
-# Partial failure: crashes must be recorded, not fatal
-# --------------------------------------------------------------------------
+
+# --- Partial failure: crashes must be recorded, not fatal
+
 
 
 def test_a_crashing_trial_does_not_abort_the_search() -> None:
@@ -294,9 +293,7 @@ def test_test_mrr_fallback_is_scored_and_flagged(tmp_path: Path) -> None:
     assert "test MRR" in (outcome.validation_error or "")
 
 
-# --------------------------------------------------------------------------
-# Total failure: the regression tests for your actual error
-# --------------------------------------------------------------------------
+# --- Total failure: the regression tests for your actual error
 
 
 def test_train_only_reports_abort_with_the_split_misrouting_diagnosis() -> None:

@@ -1,5 +1,4 @@
 # tests/test_lp_split_stratified.py
-"""Stratified learning-problem splitting."""
 
 from __future__ import annotations
 

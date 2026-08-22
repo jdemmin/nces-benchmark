@@ -39,6 +39,7 @@ def local_name(iri: str) -> str:
     NCES vocabularies are keyed on local names, so every IRI crossing into
     NCES must pass through this function.
     """
+
     for separator in ("#", "/"):
         if separator in iri:
             candidate = iri.rsplit(separator, 1)[-1]
@@ -161,6 +162,7 @@ def compute_atomic_class_extensions(
 
 def _guess_namespace(knowledge_base: KnowledgeBase) -> str:
     """Infer the default namespace from the first individual's IRI."""
+    
     for individual in knowledge_base.individuals():
         iri = individual.str
         for separator in ("#", "/"):

@@ -1,4 +1,4 @@
-# tests/test_atomic_extensions.py
+# tests/test_atomic_extension.py
 """compute_atomic_class_extensions against a real knowledge base."""
 
 from __future__ import annotations
