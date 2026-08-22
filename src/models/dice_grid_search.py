@@ -8,7 +8,7 @@ from attr import dataclass
 
 from src.config import EmbeddingSettings
 from src.models.dice import train_embedding_model
-from src.models.hpo_search_utils import best_trial_run_dir, selection_score
+from src.models.hpo_search_utils import best_trial_run_dir, selection_score, tiebreaker
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,7 @@ def grid_search(
             )
         ):
             best = (score, trial_settings, report, validation_error)
+    best = tiebreaker(best=best, trials=trials, seed=seed)
     if best is None:
         msg = (
             "GridSearch: Every DICE hyperparameter trial failed;"
