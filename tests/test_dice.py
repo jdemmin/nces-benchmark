@@ -226,7 +226,7 @@ def test_search_picks_highest_validation_mrr(
         return {"Val": {"MRR": scores[key]}}
 
     monkeypatch.setattr(
-        "src.models.dice.train_embedding_model", fake_train
+        "src.models.dice_grid_search.train_embedding_model", fake_train
     )
     best, _, trials, error, _ = search_best_embedding_setting(
         tmp_path / "data", tmp_path / "emb", base_settings, seed=1
@@ -246,7 +246,7 @@ def test_tied_scores_resolve_deterministically(
         return {"Val": {"MRR": 0.5}}
 
     monkeypatch.setattr(
-        "src.models.dice.train_embedding_model", fake_train
+        "src.models.dice_grid_search.train_embedding_model", fake_train
     )
     best, _, _, _, _ = search_best_embedding_setting(
         tmp_path / "data", tmp_path / "emb", base_settings, seed=1
@@ -265,7 +265,7 @@ def test_failed_trial_is_recorded_not_fatal(
         return {"Val": {"MRR": 0.6}}
 
     monkeypatch.setattr(
-        "src.models.dice.train_embedding_model", fake_train
+        "src.models.dice_grid_search.train_embedding_model", fake_train
     )
     best, _, trials, _, _ = search_best_embedding_setting(
         tmp_path / "data", tmp_path / "emb", base_settings, seed=1
@@ -283,7 +283,7 @@ def test_all_trials_failing_raises(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(
-        "src.models.dice.train_embedding_model", fake_train
+        "src.models.dice_grid_search.train_embedding_model", fake_train
     )
     with pytest.raises(RuntimeError, match="Every DICE hyperparameter"):
         search_best_embedding_setting(
@@ -301,7 +301,7 @@ def test_train_only_reports_abort_the_search(
         return {"Train": {"MRR": 1.0, "H@1": 1.0}}
 
     monkeypatch.setattr(
-        "src.models.dice.train_embedding_model", fake_train
+        "src.models.dice_grid_search.train_embedding_model", fake_train
     )
     with pytest.raises(RuntimeError, match="Every DICE hyperparameter"):
         search_best_embedding_setting(
