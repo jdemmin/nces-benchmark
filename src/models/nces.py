@@ -246,7 +246,7 @@ def evaluate_nces(
             number_of_problems=0,
             number_of_successful_problems=0,
         )
-    _assert_model_dir_contains_needed_files(trained_models_dir, settings)
+    assert_model_dir_contains_needed_files(trained_models_dir, settings)
     eval_timer = time.perf_counter()
     model = build_nces(
         kb_path,
@@ -381,7 +381,7 @@ def _fingerprint(net) -> float:
     return sum(float(p.detach().abs().sum()) for p in net.parameters())
 
 
-def _assert_model_dir_contains_needed_files(
+def assert_model_dir_contains_needed_files(
         trained_models_dir: Path, 
         settings: NCESSettings
     ) -> None:

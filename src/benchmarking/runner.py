@@ -1,8 +1,6 @@
 # src/benchmarking/runner.py
 """End-to-end benchmark orchestration across knowledge bases and seeds."""
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -41,6 +39,9 @@ from src.data.results import (
 from src.logging_utils import configure_logging
 from src.models.dice import EmbeddingResultDice, build_embeddings
 from src.models.nces import (
+    EmbeddingResult,
+    NCESStats,
+    assert_model_dir_contains_needed_files,
     evaluate_nces,
     prepare_nces_training_data,
     train_nces,
@@ -495,10 +496,29 @@ def _stage_train_eval_nces(
             condition,
             embeddings_file_path,
         )
+        try:
+            assert_model_dir_contains_needed_files(trained_model_path, config.nces)
+        except FileNotFoundError as e:
+            try:
+                logger.warning(
+                    "Trained model directory '%s' does not contain the expected files. "
+                    "Checking the 'trained_models' subdirectory.",
+                    trained_model_path,
+                )
+                assert_model_dir_contains_needed_files(trained_model_path / "trained_models", config.nces)
+                trained_model_path = trained_model_path / "trained_models"
+            except FileNotFoundError:
+                logger.error(
+                    "Trained model directory '%s' does not contain the expected files. "
+                    "Please ensure that the NCES model was trained correctly and that the "
+                    "trained model files are present in the directory.",
+                    trained_model_path,
+                )
+                raise e
         evaluation = evaluate_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
-            trained_models_dir=trained_model_path / "trained_models",
+            trained_models_dir=trained_model_path,
             problems=split["test"],
             settings=config.nces,
             knowledge_base=knowledge_base,
