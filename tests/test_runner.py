@@ -109,7 +109,7 @@ def test_run_single_produces_report(
                 embedding_settings=settings,
             )
             for condition in kwargs["embedding_conditions"]
-        }
+        }, 32
 
     monkeypatch.setattr(runner, "build_embeddings", fake_embeddings)
     monkeypatch.setattr(
@@ -132,9 +132,9 @@ def test_run_single_produces_report(
                     learner_name="GRU", runtime_seconds=0.1, degraded=False
                 )
         ))
-    monkeypatch.setattr(
-        runner, "get_csv_dimension", lambda *a, **k: 32
-    )
+    # monkeypatch.setattr(
+    #     runner, "get_csv_dimension", lambda *a, **k: 32
+    # )
     monkeypatch.setattr(
         nces, 
         "_assert_model_dir_contains_needed_files", 
