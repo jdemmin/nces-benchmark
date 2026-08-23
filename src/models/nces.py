@@ -246,12 +246,31 @@ def evaluate_nces(
             number_of_problems=0,
             number_of_successful_problems=0,
         )
-    assert_model_dir_contains_needed_files(trained_models_dir, settings)
+    true_trained_model_path = trained_models_dir
+    try:
+        assert_model_dir_contains_needed_files(true_trained_model_path, settings)
+    except FileNotFoundError as e:
+        try:
+            logger.warning(
+                "Trained model directory '%s' does not contain the expected files. "
+                "Checking the 'trained_models' subdirectory.",
+                true_trained_model_path,
+            )
+            assert_model_dir_contains_needed_files(true_trained_model_path / "trained_models", settings)
+            true_trained_model_path = true_trained_model_path / "trained_models"
+        except FileNotFoundError:
+            logger.error(
+                "Trained model directory '%s' does not contain the expected files. "
+                "Please ensure that the NCES model was trained correctly and that the "
+                "trained model files are present in the directory.",
+                true_trained_model_path,
+            )
+            raise e
     eval_timer = time.perf_counter()
     model = build_nces(
         kb_path,
         embeddings_path,
-        trained_models_dir,
+        true_trained_model_path,
         settings,
         load_pretrained=True,
         m=m,

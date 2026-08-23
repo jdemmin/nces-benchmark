@@ -137,7 +137,7 @@ def test_run_single_produces_report(
     # )
     monkeypatch.setattr(
         nces, 
-        "_assert_model_dir_contains_needed_files", 
+        "assert_model_dir_contains_needed_files", 
         lambda *a, **k: None
     )
     # run_single does not create the report file itself,

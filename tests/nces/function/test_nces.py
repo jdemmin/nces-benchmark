@@ -724,7 +724,7 @@ class TestEvaluateNCES:
         from src.models import nces
         from src.models.nces import evaluate_nces
 
-        monkeypatch.setattr(nces, "_assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
+        monkeypatch.setattr(nces, "assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
 
         models_dir = tmp_path / "models"
         self._weights(models_dir)
@@ -773,7 +773,7 @@ class TestEvaluateNCES:
         from src.models import nces
         from src.models.nces import evaluate_nces
         
-        monkeypatch.setattr(nces, "_assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
+        monkeypatch.setattr(nces, "assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
         models_dir = tmp_path / "models"
         self._weights(models_dir)
 
@@ -814,7 +814,7 @@ class TestEvaluateNCES:
         from src.models import nces
         from src.models.nces import evaluate_nces
         
-        monkeypatch.setattr(nces, "_assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
+        monkeypatch.setattr(nces, "assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
 
         models_dir = tmp_path / "models"
         self._weights(models_dir)
@@ -857,7 +857,7 @@ class TestEvaluateNCES:
         from src.models import nces
         from src.models.nces import evaluate_nces
 
-        monkeypatch.setattr(nces, "_assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
+        monkeypatch.setattr(nces, "assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
         models_dir = tmp_path / "models"
         self._weights(models_dir)
 
@@ -902,7 +902,7 @@ class TestEvaluateNCES:
         from src.models import nces
         from src.models.nces import evaluate_nces
 
-        monkeypatch.setattr(nces, "_assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
+        monkeypatch.setattr(nces, "assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
         models_dir = tmp_path / "models"
         self._weights(models_dir)
 
@@ -936,7 +936,7 @@ class TestEvaluateNCES:
         from src.models import nces
         from src.models.nces import evaluate_nces
         
-        monkeypatch.setattr(nces, "_assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
+        monkeypatch.setattr(nces, "assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
 
         models_dir = tmp_path / "models"
         self._weights(models_dir)
@@ -979,7 +979,7 @@ class TestEvaluateNCES:
         from src.models import nces
         from src.models.nces import evaluate_nces
 
-        monkeypatch.setattr(nces, "_assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
+        monkeypatch.setattr(nces, "assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
 
         models_dir = tmp_path / "models"
         self._weights(models_dir)
@@ -1033,7 +1033,7 @@ class TestEvaluateNCES:
         from src.models import nces
         from src.models.nces import evaluate_nces
 
-        monkeypatch.setattr(nces, "_assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
+        monkeypatch.setattr(nces, "assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
 
         models_dir = tmp_path / "models"
         self._weights(models_dir)
@@ -1068,7 +1068,7 @@ class TestEvaluateNCES:
         """NCES receives full IRIs here, unlike the training-data path."""
         from src.models import nces
         from src.models.nces import evaluate_nces
-        monkeypatch.setattr(nces, "_assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
+        monkeypatch.setattr(nces, "assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
 
         models_dir = tmp_path / "models"
         self._weights(models_dir)
@@ -1104,7 +1104,7 @@ class TestEvaluateNCES:
         """Rebuilding per problem would reload weights N times."""
         from src.models import nces
         from src.models.nces import evaluate_nces
-        monkeypatch.setattr(nces, "_assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
+        monkeypatch.setattr(nces, "assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
 
         models_dir = tmp_path / "models"
         self._weights(models_dir)
@@ -1139,7 +1139,7 @@ class TestEvaluateNCES:
         """Some upstream returns wrap the expression in ``.concept``."""
         from src.models import nces
         from src.models.nces import evaluate_nces
-        monkeypatch.setattr(nces, "_assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
+        monkeypatch.setattr(nces, "assert_model_dir_contains_needed_files", lambda *args, **kwargs: None)
 
         models_dir = tmp_path / "models"
         self._weights(models_dir)
@@ -1347,7 +1347,7 @@ class TestPipelineIntegration:
         # but the test is not about that, so patch it out.
         monkeypatch.setattr(
             nces, 
-            "_assert_model_dir_contains_needed_files", 
+            "assert_model_dir_contains_needed_files", 
             lambda *a, **k: None
         )
 
@@ -1472,7 +1472,7 @@ class TestReportSchema:
         # but the test is not about that, so patch it out.
         monkeypatch.setattr(
             nces, 
-            "_assert_model_dir_contains_needed_files", 
+            "assert_model_dir_contains_needed_files", 
             lambda *a, **k: None
         )
         
@@ -1504,7 +1504,7 @@ class TestReportSchema:
         # but the test is not about that, so patch it out.
         monkeypatch.setattr(
             nces, 
-            "_assert_model_dir_contains_needed_files", 
+            "assert_model_dir_contains_needed_files", 
             lambda *a, **k: None
         )
         """Sets and frozensets leaking into the record would break the dump."""
@@ -1532,7 +1532,7 @@ class TestReportSchema:
         # but the test is not about that, so patch it out.
         monkeypatch.setattr(
             nces, 
-            "_assert_model_dir_contains_needed_files", 
+            "assert_model_dir_contains_needed_files", 
             lambda *a, **k: None
         )
         report = self._run(

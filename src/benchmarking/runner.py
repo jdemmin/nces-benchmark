@@ -496,25 +496,6 @@ def _stage_train_eval_nces(
             condition,
             embeddings_file_path,
         )
-        try:
-            assert_model_dir_contains_needed_files(trained_model_path, config.nces)
-        except FileNotFoundError as e:
-            try:
-                logger.warning(
-                    "Trained model directory '%s' does not contain the expected files. "
-                    "Checking the 'trained_models' subdirectory.",
-                    trained_model_path,
-                )
-                assert_model_dir_contains_needed_files(trained_model_path / "trained_models", config.nces)
-                trained_model_path = trained_model_path / "trained_models"
-            except FileNotFoundError:
-                logger.error(
-                    "Trained model directory '%s' does not contain the expected files. "
-                    "Please ensure that the NCES model was trained correctly and that the "
-                    "trained model files are present in the directory.",
-                    trained_model_path,
-                )
-                raise e
         evaluation = evaluate_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
