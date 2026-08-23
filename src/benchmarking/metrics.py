@@ -37,7 +37,7 @@ COMPLEXITY_AXES = {
     "dl_length": lambda c: c.dl_length,
     "depth": lambda c: c.depth,
     "expressivity": lambda c: c.expressivity,
-    "constructors": lambda c: len(c.num_constructors),
+    "constructors": lambda c: len(c.constructors),
     "num_atomic_classes": lambda c: c.num_atomic_classes,
     "num_roles": lambda c: c.num_roles,
     "extension_ratio": lambda c: _ratio_bucket(c.hardness.extension_ratio),
