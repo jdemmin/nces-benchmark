@@ -8,7 +8,12 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from src.data.complexity import Complexity
-from src.data.results import EmbeddingResult, LearningProblemResult, MeanMetricsResult
+from src.data.results import (
+    EmbeddingResult,
+    LearningProblemResult,
+    MeanMetricsResult,
+    MetricsResult,
+)
 
 
 @dataclass(frozen=True)
@@ -29,10 +34,13 @@ class ExtensionMetrics:
 
 #: Bucketings reported in every ``complexity_summary``.
 COMPLEXITY_AXES = {
-    "by_dl_length": lambda c: c.dl_length,
-    "by_depth": lambda c: c.depth,
-    "by_expressivity": lambda c: c.expressivity,
-    "by_extension_ratio": lambda c: _ratio_bucket(c.hardness.extension_ratio),
+    "dl_length": lambda c: c.dl_length,
+    "depth": lambda c: c.depth,
+    "expressivity": lambda c: c.expressivity,
+    "constructors": lambda c: len(c.num_constructors),
+    "num_atomic_classes": lambda c: c.num_atomic_classes,
+    "num_roles": lambda c: c.num_roles,
+    "extension_ratio": lambda c: _ratio_bucket(c.hardness.extension_ratio),
 }
 
 def _ratio_bucket(ratio: float | None) -> str:
@@ -46,6 +54,7 @@ def _ratio_bucket(ratio: float | None) -> str:
     if ratio < 0.75:
         return "balanced"
     return "dominant"
+
 
 
 def compute_lift(f1: float, complexity: Complexity) -> float | None:
@@ -94,13 +103,26 @@ def calculate_metrics(
         union=union,
     )
 
-
 def _ratio(numerator: float, denominator: float) -> float:
     return float(numerator) / float(denominator) if denominator else 0.0
 
 
 def mean_embeddings_results(reports: Sequence[EmbeddingResult]) -> MeanMetricsResult:
     """Compute the mean of the metrics across multiple embedding results."""
+    metrics_list = [report.mean_metrics for report in reports if report.mean_metrics is not None]
+    return mean_results(metrics_list)
+
+def mean_results(records: list[MetricsResult] | list[MeanMetricsResult]) -> MeanMetricsResult:
+    """Compute the mean of the metrics across multiple metrics results."""
+    
+    tmp_records: list[MeanMetricsResult] = []
+    if all(isinstance(record, MetricsResult) for record in records):
+        for report in records:
+            if report is not None:
+                tmp_records.append(report.to_mean_metrics()) # type: ignore
+    else:
+        tmp_records = [report for report in records if report is not None] # type: ignore
+    none_reports = [report for report in tmp_records if report is None]
     keys = {
         "mean_accuracy": 0.0,
         "mean_precision": 0.0,
@@ -112,14 +134,12 @@ def mean_embeddings_results(reports: Sequence[EmbeddingResult]) -> MeanMetricsRe
         "mean_union": 0.0,
         "mean_lift": 0.0,
     }
-    for entry in reports:
-        metric = entry.mean_metrics if entry.mean_metrics else None
-        if metric is None:
-            continue
+    for entry in tmp_records:
         for key in keys:
-            keys[key] += getattr(metric, key, 0.0)
+            if hasattr(entry, key) and getattr(entry, key) is not None:
+                keys[key] += getattr(entry, key)
     for key in keys:
-        keys[key] /= len(reports) if reports else 1
+        keys[key] /= (len(tmp_records) - len(none_reports)) if (len(tmp_records)) > 0 else 1
     return MeanMetricsResult(
         mean_accuracy=keys["mean_accuracy"],
         mean_precision=keys["mean_precision"],
@@ -149,6 +169,7 @@ def _meanSemanticEquivalence(items: list[LearningProblemResult]) -> float:
     Compute the mean of the semantic_equivalence metric in a list of LearningProblemResults.
     Ignores missing keys.
     """
+    empty_values = 0
     if items is None or len(items) == 0:
         return 0.0
     value: int = 0
@@ -158,4 +179,36 @@ def _meanSemanticEquivalence(items: list[LearningProblemResult]) -> float:
             and entry.metrics.semantic_equivalence
         ):
             value += 1
-    return value / len(items)
+        else:
+            empty_values += 1
+    return value / (len(items) - empty_values) if (len(items) - empty_values) > 0 else 0.0
+
+
+def get_complexity_summary(records: list[LearningProblemResult]) -> dict[str, dict[str, MeanMetricsResult]]:
+    """
+    Compute the mean of each metric in a list of LearningProblemResults,
+    grouped by complexity axes.
+    """
+    summary: dict[str, dict[str, MeanMetricsResult]] = {}
+    for axis_name in COMPLEXITY_AXES:
+        group = _group_by_complexity(records, axis_name)
+        for complexity_value, group_records in group.items():
+            mean_group_metrics = mean_results(
+                [r.metrics for r in group_records if r.metrics is not None]
+            )
+            summary.setdefault(axis_name, {}).setdefault(complexity_value, mean_group_metrics)
+    return summary
+
+
+def _group_by_complexity(records: list[LearningProblemResult], axis_name: str) -> dict[Any, list[LearningProblemResult]]:
+    """
+    Group a list of LearningProblemResults by a complexity axis.
+    """
+    if axis_name not in COMPLEXITY_AXES:
+        raise ValueError(f"Unknown complexity axis: {axis_name}")
+    axis_func = COMPLEXITY_AXES[axis_name]
+    grouped: dict[Any, list[LearningProblemResult]] = {}
+    for record in records:
+        key = axis_func(record.learning_problem.complexity)
+        grouped.setdefault(key, []).append(record)
+    return grouped

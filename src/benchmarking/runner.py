@@ -12,7 +12,7 @@ from typing import Any
 
 from ontolearn.knowledge_base import KnowledgeBase
 
-from src.benchmarking.metrics import mean_embeddings_results
+from src.benchmarking.metrics import get_complexity_summary, mean_embeddings_results
 from src.config import BenchmarkConfiguration
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
@@ -114,6 +114,30 @@ def run_benchmark(
         )
         dice_mean = mean_embeddings_results(
             [r.dice_embedding_result for r in reports if r.dice_embedding_result is not None]
+        )
+        random_complexity_summary = get_complexity_summary([
+            # flattens list of lists of LearningProblemResults into a single list
+            item for sublist in [
+                r.random_embedding_result.learning_problem_results
+                for r in reports if r.random_embedding_result is not None
+            ]
+            for item in sublist
+        ])
+        dice_complexity_summary = get_complexity_summary([
+            # flattens list of lists of LearningProblemResults into a single list
+            item for sublist in [
+                r.dice_embedding_result.learning_problem_results
+                for r in reports if r.dice_embedding_result is not None
+            ]
+            for item in sublist
+        ])
+        _write_json(
+            payload=random_complexity_summary,
+            path=benchmark_dir / f"{kb_name}_mean_across_seeds_random_complexity_summary.json",
+        )
+        _write_json(
+            payload=dice_complexity_summary,
+            path=benchmark_dir / f"{kb_name}_mean_across_seeds_dice_complexity_summary.json",
         )
         knowledge_base_result = KnowledgeBaseResult(
             knowledge_base=kb_name,
@@ -230,6 +254,29 @@ def run_single(
             path=paths.nces_results_dir / "single_run_result.json",
         )
         logger.info("Wrote single-run result to %s", paths.nces_results_dir / "single_run_result.json")
+        dice_complexity_summary = get_complexity_summary(
+            single_run_result.dice_embedding_result.learning_problem_results
+            if single_run_result.dice_embedding_result else []
+        )
+        _write_json(
+            payload=dice_complexity_summary,
+            path=paths.nces_results_dir / "dice_complexity_summary.json",
+        )
+        random_complexity_summary = get_complexity_summary(
+            single_run_result.random_embedding_result.learning_problem_results
+            if single_run_result.random_embedding_result else []
+        )
+        _write_json(
+            payload=random_complexity_summary,
+            path=paths.nces_results_dir / "random_complexity_summary.json",
+        )
+        logger.info(
+            "Wrote complexity summaries to %s, %s",
+            paths.nces_results_dir / "dice_complexity_summary.json",
+            paths.nces_results_dir / "random_complexity_summary.json",
+        )
+        single_run_result.random_complexity_summary = random_complexity_summary
+        single_run_result.dice_complexity_summary = dice_complexity_summary
         atomic_extensions = compute_atomic_class_extensions(knowledge_base)
         knowledge_base_stats = KnowledgeBaseStats(
             knowledge_base_name=knowledge_base_name,

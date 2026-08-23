@@ -20,7 +20,3 @@
 
 - fix pipeline...
 - update readme (project structure, smac3)
-
-# Metrics
-
-- ComplexityResult (type, amount, mean metrics) and integration

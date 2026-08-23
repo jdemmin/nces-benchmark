@@ -90,7 +90,7 @@ class MetricsResult:
     semantic_equivalence: bool
     intersection: int
     union: int
-    lift: int
+    lift: float
 
     def __init__(
         self,
@@ -102,7 +102,7 @@ class MetricsResult:
         semantic_equivalence: bool,
         intersection: int,
         union: int,
-        lift: int
+        lift: float
     ):
         self.accuracy = accuracy
         self.precision = precision
@@ -142,6 +142,19 @@ class MetricsResult:
             "union": self.union,
             "lift": self.lift
         }
+
+    def to_mean_metrics(self) -> MeanMetricsResult:
+        return MeanMetricsResult(
+            mean_accuracy=self.accuracy,
+            mean_precision=self.precision,
+            mean_recall=self.recall,
+            mean_f1_score=self.f1_score,
+            mean_jaccard=self.jaccard,
+            mean_semantic_equivalence=float(1 if self.semantic_equivalence else 0),
+            mean_intersection=float(self.intersection),
+            mean_union=float(self.union),
+            mean_lift=float(self.lift) if self.lift is not None else 0.0
+        )
 
 class TargetExtensionStructure:
     """
@@ -325,6 +338,8 @@ class SingleRunResult:
     """
     knowledge_base: str
     random_embedding_result: EmbeddingResult | None
+    random_complexity_summary: dict[str, dict[str, MeanMetricsResult]] | None
+    dice_complexity_summary: dict[str, dict[str, MeanMetricsResult]] | None
     dice_embedding_result: EmbeddingResult | None
     runtime: float | None
 
@@ -500,4 +515,76 @@ class HardnessAnnotationResult:
     annotated_problems: list[LearningProblem]
     unparsed_problems: list[str]
     target_extensions: dict[str, frozenset[str]]
+
+
+class ComplexityStratum:
+    """
+    Represents a complexity stratum, which is a grouping of learning problems
+    based on their complexity. Each stratum contains a list of learning problems
+    and the corresponding target extensions.
+    """
+    stratum_name: str
+    mean_metric_aggregates: dict[Any, MeanMetricsResult]
+
+    def __init__(
+        self,
+        stratum_name: str,
+        mean_metric_aggregates: dict[Any, MeanMetricsResult]
+    ):
+        self.stratum_name = stratum_name
+        self.mean_metric_aggregates = mean_metric_aggregates
+
+    def to_dict(self) -> dict:
+        return {
+            "stratum_name": self.stratum_name,
+            "mean_metric_aggregates": {
+                key: value.to_dict() for key, value in self.mean_metric_aggregates.items()
+            }
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ComplexityStratum":
+        stratum_name = data.get("stratum_name", "")
+        mean_metric_aggregates_data = data.get("mean_metric_aggregates", {})
+        mean_metric_aggregates = {
+            key: MeanMetricsResult.from_dict(value) for key, value in mean_metric_aggregates_data.items()
+        }
+        return cls(
+            stratum_name=stratum_name,
+            mean_metric_aggregates=mean_metric_aggregates
+        )
+    
+
+class ComplexityResult:
+    """
+    Represents the result of a complexity analysis, which includes
+    multiple complexity strata. Each stratum contains a list of learning problems
+    and the corresponding target extensions.
+    """
+    complexity_strata: dict[str, ComplexityStratum]
+
+    def __init__(
+        self,
+        complexity_strata: dict[str, ComplexityStratum]
+    ):
+        self.complexity_strata = complexity_strata
+
+    def to_dict(self) -> dict:
+        return {
+            "complexity_strata": {
+                key: value.to_dict() for key, value in self.complexity_strata.items()
+            }
+        }
+
+
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ComplexityResult":
+        complexity_strata_data = data.get("complexity_strata", {})
+        complexity_strata = {
+            key: ComplexityStratum.from_dict(value) for key, value in complexity_strata_data.items()
+        }
+        return cls(
+            complexity_strata=complexity_strata
+        )
 
