@@ -153,11 +153,8 @@ def train_nces(
             "exceeded zero hard accuracy); persisted final-epoch weights "
             "instead of best-epoch weights."
         )
-        _save_final_weights(model, trained_models_dir, settings)
-        logger.info(
-            "Saved final-epoch weights to %s",
-            trained_models_dir / f"trained_{settings.learner_name}.pt",
-        )
+    _save_final_weights(model, trained_models_dir, settings)
+        
     runtime = time.perf_counter() - started
     return NCESStats(
         learner_name=settings.learner_name,
@@ -201,6 +198,10 @@ def _save_final_weights(model, trained_models_dir: Path, settings: NCESSettings)
     with (models_dir / "vocab.json").open("w", encoding="utf-8") as handle:
         _json.dump(model.vocab, handle)
     np.save(models_dir / "inv_vocab.npy", model.inv_vocab)
+    logger.info(
+                "Saved final-epoch weights to %s",
+                trained_models_dir / f"trained_{settings.learner_name}.pt",
+            )
 
 
 def evaluate_nces(

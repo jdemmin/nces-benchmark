@@ -504,7 +504,7 @@ def _stage_train_eval_nces(
         evaluation = evaluate_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
-            trained_models_dir=trained_model_path / "trained_models",
+            trained_models_dir=trained_model_path,
             problems=split["test"],
             settings=config.nces,
             knowledge_base=knowledge_base,
