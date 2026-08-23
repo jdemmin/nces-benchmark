@@ -153,7 +153,9 @@ def train_nces(
             "exceeded zero hard accuracy); persisted final-epoch weights "
             "instead of best-epoch weights."
         )
-    _save_final_weights(model, trained_models_dir, settings)
+        # Save the final-epoch weights to the trained models directory, since
+        # the upstream trainer did not do so.
+        _save_final_weights(model, trained_models_dir, settings)
         
     runtime = time.perf_counter() - started
     return NCESStats(

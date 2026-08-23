@@ -225,7 +225,7 @@ def run_single(
             len(split["test"]),
         )
         logger.info("Completed Stage 4: Learning-problem splitting.")
-        embedding_report = _embedding_stage(
+        embedding_report, m = _embedding_stage(
             paths=paths,
             kb_path=kb_path,
             benchmark_settings=config,
@@ -244,6 +244,7 @@ def run_single(
             target_extensions=target_extensions,
             embedding_report=embedding_report,
             config=config,
+            m=m
         )
         logger.info(
             "Completed Stage 6: NCES training and evaluation for all conditions."
@@ -356,14 +357,14 @@ def _embedding_stage(
         kb_path: Path,
         benchmark_settings: BenchmarkConfiguration,
         seed: int,
-    )-> dict[str, EmbeddingResultDice]:
+    ) -> tuple[dict[str, EmbeddingResultDice], int]:
     """
     Run the embedding stage and return the report.
     Creates a temporary data directory to avoid triggering dicee path checks.
     Copies the embeddings to the run's embeddings directory so nothing is lost.
     """
 
-    report = build_embeddings(
+    report, m = build_embeddings(
             kb_path=kb_path,
             embeddings_dir=paths.embeddings_dir,
             data_dir=paths.embeddings_data_dir,
@@ -372,7 +373,7 @@ def _embedding_stage(
             embedding_conditions=benchmark_settings.project.embedding_conditions,
             expected_dim=benchmark_settings.nces.embedding_dim
         )
-    return report
+    return report, m
 
 
 def _write_json(payload: dict[str, Any], path: Path) -> None:
@@ -446,6 +447,7 @@ def _stage_train_eval_nces(
         all_individuals: list[str], 
         target_extensions: dict[str, frozenset[str]], 
         embedding_report: dict[str, EmbeddingResultDice], 
+        m: int,
         config: BenchmarkConfiguration
     ) -> SingleRunResult:
     """
@@ -462,14 +464,6 @@ def _stage_train_eval_nces(
         embeddings_file_path = paths.entity_embeddings_path(
             model_name=config.embedding.model_name, random=(condition == "random")
         )
-        try:
-            if embeddings_file_path is None:
-                raise FileNotFoundError(f"Embeddings path for condition '{condition}' is None.")
-            csv_dim = get_csv_dimension(embeddings_file_path)
-            logger.info("CSV dimension for condition '%s': %d", condition, csv_dim)
-        except Exception as e:
-            logger.error("Failed to get CSV dimension: %s", e)
-            raise
         # location where the trained model will be saved
         # and parent directory where the evaluation will read from
         trained_model_path = paths.nces_suffix_dir(condition)
@@ -485,7 +479,7 @@ def _stage_train_eval_nces(
             trained_models_dir=trained_model_path,
             train_data=train_data,
             settings=config.nces,
-            m=csv_dim,
+            m=m,
         )
         _write_json(
             payload=training.to_dict(),
@@ -504,14 +498,14 @@ def _stage_train_eval_nces(
         evaluation = evaluate_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
-            trained_models_dir=trained_model_path,
+            trained_models_dir=trained_model_path / "trained_models",
             problems=split["test"],
             settings=config.nces,
             knowledge_base=knowledge_base,
             all_individuals=all_individuals,
             target_extensions=target_extensions,
             split_name="test",
-            m=csv_dim,
+            m=m,
             trained_model_settings=embedding_report[condition].embedding_settings,
         )
         logger.info(
