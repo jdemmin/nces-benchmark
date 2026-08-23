@@ -39,7 +39,7 @@ from src.data.results import (
     SingleRunResult,
 )
 from src.logging_utils import configure_logging
-from src.models.dice import EmbeddingResultDice, build_embeddings, get_csv_dimension
+from src.models.dice import EmbeddingResultDice, build_embeddings
 from src.models.nces import (
     evaluate_nces,
     prepare_nces_training_data,
