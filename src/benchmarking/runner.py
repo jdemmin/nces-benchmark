@@ -471,7 +471,7 @@ def _stage_train_eval_nces(
             logger.error("Failed to get CSV dimension: %s", e)
             raise
         # location where the trained model will be saved
-        # and where the evaluation will read from
+        # and parent directory where the evaluation will read from
         trained_model_path = paths.nces_suffix_dir(condition)
         logger.info(
             "Starting NCES training for condition '%s'" \
@@ -504,7 +504,7 @@ def _stage_train_eval_nces(
         evaluation = evaluate_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
-            trained_models_dir=trained_model_path,
+            trained_models_dir=trained_model_path / "trained_models",
             problems=split["test"],
             settings=config.nces,
             knowledge_base=knowledge_base,
