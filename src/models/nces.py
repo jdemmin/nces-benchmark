@@ -8,13 +8,13 @@ import logging
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from random import shuffle
 from typing import Any, cast
 
 from src.benchmarking.metrics import (
-    _mean,
-    _meanSemanticEquivalence,
     calculate_metrics,
     compute_lift,
+    mean_results,
 )
 from src.config import EmbeddingSettings, NCESSettings
 from src.data.lp import LearningProblem
@@ -22,7 +22,6 @@ from src.data.ontology import concept_extension
 from src.data.results import (
     EmbeddingResult,
     LearningProblemResult,
-    MeanMetricsResult,
     MetricsResult,
     NCESStats,
     TargetExtensionStructure,
@@ -40,6 +39,8 @@ def prepare_nces_training_data(
     "negative examples": [...]})`` tuples keyed on **local names**.
     """
     data = [problem.as_nces_datapoint() for problem in problems]
+    data = sorted(data, key=lambda x: x[0])
+    shuffle(data)
     if len(dict(data)) != len(data):
         logger.warning(
             "%d of %d learning problems share a target concept; "
@@ -368,17 +369,13 @@ def evaluate_nces(
         )
         records.append(learning_problem_result)
     scored = [record for record in records if record.error is None]
-    mean_metrics = MeanMetricsResult(
-        mean_accuracy=_mean(scored, "accuracy"),
-        mean_f1_score=_mean(scored, "f1_score"),
-        mean_jaccard=_mean(scored, "jaccard"),
-        mean_semantic_equivalence=_meanSemanticEquivalence(scored),
-        mean_intersection=_mean(scored, "intersection"),
-        mean_union=_mean(scored, "union"),
-        mean_precision=_mean(scored, "precision"),
-        mean_recall=_mean(scored, "recall"),
-        mean_lift=_mean(scored, "lift"),
-    )
+    final_time = round(time.perf_counter() - eval_timer, 3)
+    logger.info("Collecting mean metrics across %d successful problems", len(scored))
+    mean_metrics = mean_results([
+        record.metrics for record in scored 
+        if record is not None and record.metrics is not None and record.error is None
+    ])
+    logger.info("Finished computing mean metrics across %d successful problems", len(scored))
     logger.info(
         "NCES evaluation completed in %.3f seconds: %d problems, %d successful",
         time.perf_counter() - eval_timer,
@@ -394,7 +391,7 @@ def evaluate_nces(
         embedding_settings=trained_model_settings,
         nces_stats=NCESStats(
             learner_name=settings.learner_name,
-            runtime_seconds=round(time.perf_counter() - eval_timer, 3),
+            runtime_seconds=final_time,
             degraded=False,
         ),
     )
