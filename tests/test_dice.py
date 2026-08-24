@@ -513,7 +513,7 @@ def test_local_name_handles_hash_and_slash() -> None:
 
 
 def test_parse_triples_skips_literals(kb_path: Path) -> None:
-    triples = parse_triples(kb_path)
+    triples = parse_triples(kb_path, 42)
     assert triples
     assert all(t.subject.startswith("http") for t in triples)
 
