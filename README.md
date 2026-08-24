@@ -111,7 +111,7 @@ handful of examples from scoring perfectly.
 │   ├── data_generation_settings.json
 │   ├── embedding_settings.json
 │   └── nces_settings.json
-├── Output/              all generated artifacts
+├── output/              all generated artifacts
 ├── src/
 │   ├── __main__.py           nces-benchmark CLI entry point
 │   ├── config.py             typed settings; maps project JSON → upstream kwargs
@@ -119,9 +119,14 @@ handful of examples from scoring perfectly.
 │   ├── logging_utils.py      console + per-run file logging
 │   ├── data/
 │   │   ├── ontology.py       OWL parsing, triples, individuals, extensions
+│   │   ├── complexity.py     Data class
 │   │   └── lp.py             learning-problem generation, schema, splitting
 │   ├── models/
 │   │   ├── dice.py           DICE datasets, training, search, export, baseline
+│   │   ├── dice_grid_search  Hyperparameter optimisation (hpo) via grid search
+│   │   ├── dice_smac         hpo vis smac framework. Bayesian optimization
+│   │   │                     with random forest surrogate
+│   │   ├── hpo_search_utils  different tools to support hpo
 │   │   └── nces.py           NCES data prep, training, evaluation
 │   └── benchmarking/
 │       ├── metrics.py        extension metrics, complexity aggregation
@@ -148,26 +153,37 @@ Output/benchmark1/
 ├── benchmark_summary.json          across all knowledge bases
 ├── semantic_bible_summary.json         across seeds, for `semantic_bible`
 └── seed1/
-    └── semantic_bible/
-        ├── embeddings/
-        │   ├── Keci.csv                trained DICE entity embeddings
-        │   ├── Keci_random.csv         random embedding baseline
-        │   ├── embedding_report.json   trial metrics, triple counts
-        │   ├── data/                   train.txt, valid.txt, test.txt
-        │   └── trial_00_Keci/ …        per-trial DICE run directories
-        ├── nces/
-        │   ├── nces_report.json        the benchmark run report
-        │   ├── data/
-        │   │   ├── learning_problems.json    all problems, by complexity
-        │   │   ├── train_problems.json
-        │   │   ├── test_problems.json
-        │   │   ├── nces_train_data.json      local-name form for NCES
-        │   │   └── LPs.json                  raw ontolearn output
-        │   └── trained_models/
-        │       ├── dice/               weights, dice condition
-        │       └── random/             weights, random condition
-        └── logs/
-            └── semantic_bible.log
+    ├── semantic_bible/
+    │   ├── embeddings/
+    │   │   ├── Keci.csv                trained DICE entity embeddings
+    │   │   ├── Keci_random.csv         random embedding baseline
+    │   │   ├── best_report.json        trial metrics of the best embedding
+    │   │   │                           (highes validation MRR)
+    │   │   ├── embedding_report.json   trial metrics, triple counts
+    │   │   ├── data/                   train.txt, valid.txt, test.txt
+    │   │   ├── smac/                   smac configuration artifacts
+    │   │   └── trial_00_Keci/ …        per-trial DICE run directories
+    │   ├── nces/
+    │   │   ├── nces_report.json        the benchmark run report
+    │   │   ├── data/
+    │   │   │   ├── learning_problems.json    all problems, by complexity
+    │   │   │   ├── train_problems.json
+    │   │   │   ├── test_problems.json
+    │   │   │   ├── nces_train_data.json      local-name form for NCES
+    │   │   │   └── LPs.json                  raw ontolearn output
+    │   │   ├── dice/
+    │   │   │   ├── trained_models/       trained embedding results
+    │   │   │   └── training_stats.json   runtime, learner_name, degradation
+    │   │   ├── random/                   same as dice but for random condition
+    │   │   └── results/                  complexity summaries, results for the
+    │   │                                 single run itself
+    │   ├── logs/
+    │   │   └── semantic_bible.log
+    │   └── benchmark_summary.json        number of runs, failures
+    ├── ..._dice_complexity_summary       mean complexity summary across seeds
+    ├── ..._random_complexity_summary     mean complexity summary across seeds
+    └── semantic_bible_mean_across_seeds  mean metrics across seeds
+
 ```
 
 ### Reading the results
@@ -175,28 +191,43 @@ Output/benchmark1/
 `benchmark_summary.json` gives the headline comparison:
 
 ```json
-{
-  "benchmark_name": "benchmark1",
-  "per_knowledge_base": {
-    "semantic_bible": {
-      "num_runs": 5,
-      "embedding_conditions": {
-        "dice":   { "mean_f1": 0.83, "semantic_equivalence_rate": 0.41 },
-        "random": { "mean_f1": 0.52, "semantic_equivalence_rate": 0.09 }
-      }
+  "dice_embedding_result": {
+    "mean_metrics": {
+      "mean_accuracy": 0.5196043486009626,
+      "mean_precision": 0.4784676499807831,
+      "mean_recall": 0.8993826337174725,
+      "mean_f1_score": 0.4965112151890474,
+      "mean_jaccard": 0.4407024062383637,
+      "mean_semantic_equivalence": 0.0,
+      "mean_intersection": 311.7096774193548,
+      "mean_union": 659.516129032258,
+      "mean_lift": -0.3844667690980204
     }
-  }
-}
 ```
 
+```json
+  "random_embedding_result": {
+    "mean_metrics": {
+      "mean_accuracy": 0.4863215113170559,
+      "mean_precision": 0.46227435956985613,
+      "mean_recall": 0.695742475084275,
+      "mean_f1_score": 0.4250734448839508,
+      "mean_jaccard": 0.3629594947059871,
+      "mean_semantic_equivalence": 0.0,
+      "mean_intersection": 257.3225806451613,
+      "mean_union": 629.2258064516129,
+      "mean_lift": -0.455904539403117
+    }
+```
+
+The shown `.json`'s are exempts from the `nces/single_run_result.json`.
+The file itself contains much more information.
 The gap between conditions is the result the benchmark exists to produce.
 
-For per-problem detail, open a run's `nces/nces_report.json`. Each entry in
+For per-problem detail, open a run's `nces/single_run_result.json`. Each entry in
 `results` carries the target concept, the hypothesis, all six metrics, the
 full target-extension counts, and the runtime. The `complexity_summary`
-breaks the same metrics down by DL-expression length, which is usually where
-the interesting pattern lives: embedding quality tends to matter more as
-target concepts grow.
+breaks the same metrics down by the atrributes of complexity.
 
 ---
 
@@ -404,10 +435,9 @@ Every run also writes `logs/<knowledge_base>.log` alongside its report.
 ## Further reading
 
 - `GLOSSARY.md` — canonical terminology and naming rules.
-- `KNOWN_ISSUES.md` — upstream defects and the workarounds in use, notably why
-  learning-problem generation goes through `LPGen` rather than
-  `LearningProblemGenerator.get_examples()`.
+- `KNOWN_ISSUES.md` — upstream defects and the workarounds in use
 - [Ontolearn](https://github.com/dice-group/Ontolearn) — NCES and the OWL
   learner framework.
 - [dice-embeddings](https://github.com/dice-group/dice-embeddings) — the
   knowledge-graph embedding library.
+- [SMAC framework](https://github.com/automl/SMAC3)
