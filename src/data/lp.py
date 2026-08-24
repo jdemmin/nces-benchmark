@@ -333,7 +333,7 @@ def split_learning_problems(
 
     for key in sorted(strata):
         stratum = sorted(strata[key], key=lambda p: p.id)
-        random.Random(f"{seed}:{key}").shuffle(stratum)
+        random.Random(seed).shuffle(stratum)
         total = len(stratum)
         if 0 < ratios[0] < 1 and 0 < ratios[1] < 1 and ratios[0] + ratios[1] == 1:
             n_train = max(1, int(total * ratios[0]))
@@ -346,8 +346,16 @@ def split_learning_problems(
         # Guarantee a non-empty test split, as the unstratified path did.
         split["test"] = [split["train"].pop()]
 
-    return split
+    return _sort_then_shuffle_splits(split, seed=seed)
 
+
+def _sort_then_shuffle_splits(splits: dict[str, list[LearningProblem]], seed: int) -> dict[str, list[LearningProblem]]:
+    """Shuffle each split in-place with a deterministic seed."""
+    tmp_splits = splits.copy()
+    for problems in tmp_splits.values():
+        problems.sort(key=lambda p: p.id)
+        random.Random(seed).shuffle(problems)
+    return tmp_splits
 
 def save_split(
     split: dict[str, list[LearningProblem]], directory: Path

@@ -39,8 +39,6 @@ def prepare_nces_training_data(
     "negative examples": [...]})`` tuples keyed on **local names**.
     """
     data = [problem.as_nces_datapoint() for problem in problems]
-    data = sorted(data, key=lambda x: x[0])
-    shuffle(data)
     if len(dict(data)) != len(data):
         logger.warning(
             "%d of %d learning problems share a target concept; "
