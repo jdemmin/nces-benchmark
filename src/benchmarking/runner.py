@@ -117,7 +117,7 @@ def run_benchmark(
             for item in sublist
         ])
         _write_json(
-            payload=_convert_complexity_summary_to_dict(complexity_summary),
+            payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
             path=benchmark_dir / f"{kb_name}_mean_across_seeds_random_complexity_summary.json",
         )
         complexity_summary = get_complexity_summary([
@@ -129,7 +129,7 @@ def run_benchmark(
             for item in sublist
         ])
         _write_json(
-            payload=_convert_complexity_summary_to_dict(complexity_summary),
+            payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
             path=benchmark_dir / f"{kb_name}_mean_across_seeds_dice_complexity_summary.json",
         )
         random_mean = mean_embeddings_results(
@@ -259,7 +259,7 @@ def run_single(
             if single_run_result.dice_embedding_result else []
         )
         _write_json(
-            payload=_convert_complexity_summary_to_dict(dice_complexity_summary),
+            payload=dict(sorted(_convert_complexity_summary_to_dict(dice_complexity_summary).items())),
             path=paths.nces_results_dir / "dice_complexity_summary.json",
         )
         random_complexity_summary = get_complexity_summary(
@@ -267,7 +267,7 @@ def run_single(
             if single_run_result.random_embedding_result else []
         )
         _write_json(
-            payload=_convert_complexity_summary_to_dict(random_complexity_summary),
+            payload=dict(sorted(_convert_complexity_summary_to_dict(random_complexity_summary).items())),
             path=paths.nces_results_dir / "random_complexity_summary.json",
         )
         logger.info(
