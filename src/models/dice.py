@@ -335,7 +335,7 @@ def build_embeddings(
     trial's entity embeddings. The ``random`` condition reuses the entity
     vocabulary and the selected dimensionality but never trains.
     """
-    triples = parse_triples(kb_path)
+    triples = parse_triples(kb_path, seed=seed)
     counts = write_dicee_dataset(triples, data_dir, seed=seed)
 
     entity_names = sorted(
