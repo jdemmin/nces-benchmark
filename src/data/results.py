@@ -420,6 +420,9 @@ class KnowledgeBaseStats:
     number_of_triples: int
     number_of_atomic_classes: int
 
+    def to_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
 
 @dataclass
 class KnowledgeBaseFailure:
