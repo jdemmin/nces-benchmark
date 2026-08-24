@@ -39,9 +39,6 @@ from src.data.results import (
 from src.logging_utils import configure_logging
 from src.models.dice import EmbeddingResultDice, build_embeddings
 from src.models.nces import (
-    EmbeddingResult,
-    NCESStats,
-    assert_model_dir_contains_needed_files,
     evaluate_nces,
     prepare_nces_training_data,
     train_nces,
@@ -294,12 +291,31 @@ def run_single(
             "Wrote knowledge-base stats to %s",
             paths.kb_dir / f"knowledge_base_stats_{seed}.json",
         )
+        _remove_trials(path=paths.embeddings_dir)
         return single_run_result 
     finally:
         if handler is not None:
             logging.getLogger().removeHandler(handler)
             handler.close()
         
+
+def _remove_trials(path: Path) -> None:
+    """Remove embeddings that are not used in the benchmark run."""
+
+    logger.info(
+        "Proceeding to remove unused embedding files with keyword ``trial`` in %s", path
+    )
+    for dir in path.iterdir():
+        if dir.is_dir() and "trial" in dir.name:
+            for subfile in dir.iterdir():
+                if subfile.is_file():
+                    logger.info("Removing unused embedding file %s", subfile)
+                    subfile.unlink()
+            dir.rmdir()
+    logger.info(
+        "Completed removal of unused embedding files with keyword ``trial`` in %s", path
+    )
+
 
 def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
     """Log the spread along each complexity axis.
@@ -496,25 +512,6 @@ def _stage_train_eval_nces(
             condition,
             embeddings_file_path,
         )
-        try:
-            assert_model_dir_contains_needed_files(trained_model_path, config.nces)
-        except FileNotFoundError as e:
-            try:
-                logger.warning(
-                    "Trained model directory '%s' does not contain the expected files. "
-                    "Checking the 'trained_models' subdirectory.",
-                    trained_model_path,
-                )
-                assert_model_dir_contains_needed_files(trained_model_path / "trained_models", config.nces)
-                trained_model_path = trained_model_path / "trained_models"
-            except FileNotFoundError:
-                logger.error(
-                    "Trained model directory '%s' does not contain the expected files. "
-                    "Please ensure that the NCES model was trained correctly and that the "
-                    "trained model files are present in the directory.",
-                    trained_model_path,
-                )
-                raise e
         evaluation = evaluate_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),
