@@ -153,11 +153,10 @@ def train_nces(
             "exceeded zero hard accuracy); persisted final-epoch weights "
             "instead of best-epoch weights."
         )
+        # Save the final-epoch weights to the trained models directory, since
+        # the upstream trainer did not do so.
         _save_final_weights(model, trained_models_dir, settings)
-        logger.info(
-            "Saved final-epoch weights to %s",
-            trained_models_dir / f"trained_{settings.learner_name}.pt",
-        )
+        
     runtime = time.perf_counter() - started
     return NCESStats(
         learner_name=settings.learner_name,
@@ -201,6 +200,10 @@ def _save_final_weights(model, trained_models_dir: Path, settings: NCESSettings)
     with (models_dir / "vocab.json").open("w", encoding="utf-8") as handle:
         _json.dump(model.vocab, handle)
     np.save(models_dir / "inv_vocab.npy", model.inv_vocab)
+    logger.info(
+                "Saved final-epoch weights to %s",
+                trained_models_dir / f"trained_{settings.learner_name}.pt",
+            )
 
 
 def evaluate_nces(
@@ -243,12 +246,31 @@ def evaluate_nces(
             number_of_problems=0,
             number_of_successful_problems=0,
         )
-    _assert_model_dir_contains_needed_files(trained_models_dir, settings)
+    true_trained_model_path = trained_models_dir
+    try:
+        assert_model_dir_contains_needed_files(true_trained_model_path, settings)
+    except FileNotFoundError as e:
+        try:
+            logger.warning(
+                "Trained model directory '%s' does not contain the expected files. "
+                "Checking the 'trained_models' subdirectory.",
+                true_trained_model_path,
+            )
+            assert_model_dir_contains_needed_files(true_trained_model_path / "trained_models", settings)
+            true_trained_model_path = true_trained_model_path / "trained_models"
+        except FileNotFoundError:
+            logger.error(
+                "Trained model directory '%s' does not contain the expected files. "
+                "Please ensure that the NCES model was trained correctly and that the "
+                "trained model files are present in the directory.",
+                true_trained_model_path,
+            )
+            raise e
     eval_timer = time.perf_counter()
     model = build_nces(
         kb_path,
         embeddings_path,
-        trained_models_dir,
+        true_trained_model_path,
         settings,
         load_pretrained=True,
         m=m,
@@ -378,7 +400,7 @@ def _fingerprint(net) -> float:
     return sum(float(p.detach().abs().sum()) for p in net.parameters())
 
 
-def _assert_model_dir_contains_needed_files(
+def assert_model_dir_contains_needed_files(
         trained_models_dir: Path, 
         settings: NCESSettings
     ) -> None:

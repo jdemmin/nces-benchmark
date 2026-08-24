@@ -328,7 +328,7 @@ def build_embeddings(
     seed: int,
     embedding_conditions: Sequence[str],
     expected_dim: int,
-) -> dict[str, EmbeddingResultDice]:
+) -> tuple[dict[str, EmbeddingResultDice], int]:
     """Run the full embedding stage for every requested condition.
 
     The ``dice`` condition trains the hyperparameter grid and exports the best
@@ -366,7 +366,7 @@ def build_embeddings(
             validation_error=validation_error,
             embeddings_path=output_path,
         )
-        logger.info(""
+        logger.info(
             "DICE embedding completed: %d entities, dim=%d, score=%.4f, "
             "validation_error=%s",
             len(entity_names),
@@ -379,7 +379,17 @@ def build_embeddings(
         output_path = embeddings_dir / f"{chosen.model_name}_random.csv"
         # Match the exported DICE width, not the configured dimension: some
         # models store several components per dimension.
-        baseline_dim = get_csv_dimension(embeddings_dir / f"{chosen.model_name}.csv")
+        baseline_dim: int = -1
+        try:
+            baseline_dim = get_csv_dimension(embeddings_dir / f"{chosen.model_name}.csv")
+        except FileNotFoundError as e:
+            logger.error(
+                "Failed to get CSV dimension for DICE embeddings: %s. "
+                "Falling back to the configured embedding dimension %d.",
+                e,
+                chosen.embedding_dim,
+            )
+            baseline_dim = expected_dim
         generate_random_embeddings(
             entity_names,
             output_path,
@@ -409,7 +419,7 @@ def build_embeddings(
             handle,
             indent=2,
         )
-    return results
+    return results, baseline_dim
 
 def _entity_embedding_matrix(model: Any) -> np.ndarray:
     """Return the dense entity-embedding matrix from a loaded ``KGE``.

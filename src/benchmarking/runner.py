@@ -1,8 +1,6 @@
 # src/benchmarking/runner.py
 """End-to-end benchmark orchestration across knowledge bases and seeds."""
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -12,7 +10,7 @@ from typing import Any
 
 from ontolearn.knowledge_base import KnowledgeBase
 
-from src.benchmarking.metrics import mean_embeddings_results
+from src.benchmarking.metrics import get_complexity_summary, mean_embeddings_results
 from src.config import BenchmarkConfiguration
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
@@ -39,8 +37,11 @@ from src.data.results import (
     SingleRunResult,
 )
 from src.logging_utils import configure_logging
-from src.models.dice import EmbeddingResultDice, build_embeddings, get_csv_dimension
+from src.models.dice import EmbeddingResultDice, build_embeddings
 from src.models.nces import (
+    EmbeddingResult,
+    NCESStats,
+    assert_model_dir_contains_needed_files,
     evaluate_nces,
     prepare_nces_training_data,
     train_nces,
@@ -114,6 +115,30 @@ def run_benchmark(
         )
         dice_mean = mean_embeddings_results(
             [r.dice_embedding_result for r in reports if r.dice_embedding_result is not None]
+        )
+        random_complexity_summary = get_complexity_summary([
+            # flattens list of lists of LearningProblemResults into a single list
+            item for sublist in [
+                r.random_embedding_result.learning_problem_results
+                for r in reports if r.random_embedding_result is not None
+            ]
+            for item in sublist
+        ])
+        dice_complexity_summary = get_complexity_summary([
+            # flattens list of lists of LearningProblemResults into a single list
+            item for sublist in [
+                r.dice_embedding_result.learning_problem_results
+                for r in reports if r.dice_embedding_result is not None
+            ]
+            for item in sublist
+        ])
+        _write_json(
+            payload=random_complexity_summary,
+            path=benchmark_dir / f"{kb_name}_mean_across_seeds_random_complexity_summary.json",
+        )
+        _write_json(
+            payload=dice_complexity_summary,
+            path=benchmark_dir / f"{kb_name}_mean_across_seeds_dice_complexity_summary.json",
         )
         knowledge_base_result = KnowledgeBaseResult(
             knowledge_base=kb_name,
@@ -201,7 +226,7 @@ def run_single(
             len(split["test"]),
         )
         logger.info("Completed Stage 4: Learning-problem splitting.")
-        embedding_report = _embedding_stage(
+        embedding_report, m = _embedding_stage(
             paths=paths,
             kb_path=kb_path,
             benchmark_settings=config,
@@ -220,6 +245,7 @@ def run_single(
             target_extensions=target_extensions,
             embedding_report=embedding_report,
             config=config,
+            m=m
         )
         logger.info(
             "Completed Stage 6: NCES training and evaluation for all conditions."
@@ -230,6 +256,29 @@ def run_single(
             path=paths.nces_results_dir / "single_run_result.json",
         )
         logger.info("Wrote single-run result to %s", paths.nces_results_dir / "single_run_result.json")
+        dice_complexity_summary = get_complexity_summary(
+            single_run_result.dice_embedding_result.learning_problem_results
+            if single_run_result.dice_embedding_result else []
+        )
+        _write_json(
+            payload=dice_complexity_summary,
+            path=paths.nces_results_dir / "dice_complexity_summary.json",
+        )
+        random_complexity_summary = get_complexity_summary(
+            single_run_result.random_embedding_result.learning_problem_results
+            if single_run_result.random_embedding_result else []
+        )
+        _write_json(
+            payload=random_complexity_summary,
+            path=paths.nces_results_dir / "random_complexity_summary.json",
+        )
+        logger.info(
+            "Wrote complexity summaries to %s, %s",
+            paths.nces_results_dir / "dice_complexity_summary.json",
+            paths.nces_results_dir / "random_complexity_summary.json",
+        )
+        single_run_result.random_complexity_summary = random_complexity_summary
+        single_run_result.dice_complexity_summary = dice_complexity_summary
         atomic_extensions = compute_atomic_class_extensions(knowledge_base)
         knowledge_base_stats = KnowledgeBaseStats(
             knowledge_base_name=knowledge_base_name,
@@ -309,14 +358,14 @@ def _embedding_stage(
         kb_path: Path,
         benchmark_settings: BenchmarkConfiguration,
         seed: int,
-    )-> dict[str, EmbeddingResultDice]:
+    ) -> tuple[dict[str, EmbeddingResultDice], int]:
     """
     Run the embedding stage and return the report.
     Creates a temporary data directory to avoid triggering dicee path checks.
     Copies the embeddings to the run's embeddings directory so nothing is lost.
     """
 
-    report = build_embeddings(
+    report, m = build_embeddings(
             kb_path=kb_path,
             embeddings_dir=paths.embeddings_dir,
             data_dir=paths.embeddings_data_dir,
@@ -325,7 +374,7 @@ def _embedding_stage(
             embedding_conditions=benchmark_settings.project.embedding_conditions,
             expected_dim=benchmark_settings.nces.embedding_dim
         )
-    return report
+    return report, m
 
 
 def _write_json(payload: dict[str, Any], path: Path) -> None:
@@ -399,6 +448,7 @@ def _stage_train_eval_nces(
         all_individuals: list[str], 
         target_extensions: dict[str, frozenset[str]], 
         embedding_report: dict[str, EmbeddingResultDice], 
+        m: int,
         config: BenchmarkConfiguration
     ) -> SingleRunResult:
     """
@@ -415,16 +465,8 @@ def _stage_train_eval_nces(
         embeddings_file_path = paths.entity_embeddings_path(
             model_name=config.embedding.model_name, random=(condition == "random")
         )
-        try:
-            if embeddings_file_path is None:
-                raise FileNotFoundError(f"Embeddings path for condition '{condition}' is None.")
-            csv_dim = get_csv_dimension(embeddings_file_path)
-            logger.info("CSV dimension for condition '%s': %d", condition, csv_dim)
-        except Exception as e:
-            logger.error("Failed to get CSV dimension: %s", e)
-            raise
         # location where the trained model will be saved
-        # and where the evaluation will read from
+        # and parent directory where the evaluation will read from
         trained_model_path = paths.nces_suffix_dir(condition)
         logger.info(
             "Starting NCES training for condition '%s'" \
@@ -438,7 +480,7 @@ def _stage_train_eval_nces(
             trained_models_dir=trained_model_path,
             train_data=train_data,
             settings=config.nces,
-            m=csv_dim,
+            m=m,
         )
         _write_json(
             payload=training.to_dict(),
@@ -464,7 +506,7 @@ def _stage_train_eval_nces(
             all_individuals=all_individuals,
             target_extensions=target_extensions,
             split_name="test",
-            m=csv_dim,
+            m=m,
             trained_model_settings=embedding_report[condition].embedding_settings,
         )
         logger.info(

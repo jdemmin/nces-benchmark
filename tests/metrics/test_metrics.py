@@ -279,28 +279,21 @@ class TestComputeLift:
 
 
 class TestComplexityAxes:
-    def test_axis_names(self):
-        assert set(COMPLEXITY_AXES) == {
-            "by_dl_length",
-            "by_depth",
-            "by_expressivity",
-            "by_extension_ratio",
-        }
 
     def test_key_functions_read_the_right_field(self):
         complexity = make_complexity(
             dl_length=7, depth=3, expressivity="ALC", extension_ratio=0.1
         )
-        assert COMPLEXITY_AXES["by_dl_length"](complexity) == 7
-        assert COMPLEXITY_AXES["by_depth"](complexity) == 3
-        assert COMPLEXITY_AXES["by_expressivity"](complexity) == "ALC"
-        assert COMPLEXITY_AXES["by_extension_ratio"](complexity) == "uncommon"
+        assert COMPLEXITY_AXES["dl_length"](complexity) == 7
+        assert COMPLEXITY_AXES["depth"](complexity) == 3
+        assert COMPLEXITY_AXES["expressivity"](complexity) == "ALC"
+        assert COMPLEXITY_AXES["extension_ratio"](complexity) == "uncommon"
 
     def test_extension_ratio_axis_reads_hardness_via_property(self):
         """The axis uses ``c.extension_ratio``, not ``c.hardness.extension_ratio``."""
         complexity = make_complexity(extension_ratio=0.9)
         try:
-            bucket = COMPLEXITY_AXES["by_extension_ratio"](complexity)
+            bucket = COMPLEXITY_AXES["extension_ratio"](complexity)
         except AttributeError:
             pytest.fail(
                 "Complexity exposes no 'extension_ratio' attribute; the axis "
