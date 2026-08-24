@@ -175,7 +175,7 @@ def generate_learning_problems(
         kwargs["max_num_lps"],
         kb_path.name,
     )
-    LPGen(**kwargs).generate()
+    LPGen(random_seed=seed, **kwargs).generate()
 
     raw_path = storage_path / "LPs.json"
     if not raw_path.is_file():
