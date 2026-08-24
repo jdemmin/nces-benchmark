@@ -1183,7 +1183,7 @@ class TestHelpers:
     #     assert _mean(records, "f1") == pytest.approx(1.0 / 2.0)
 
     def test_mean_of_empty_is_zero_not_a_zero_division(self):
-        from src.models.nces import _mean
+        from src.benchmarking.metrics import _mean
 
         assert _mean([], "f1") == 0.0
 
