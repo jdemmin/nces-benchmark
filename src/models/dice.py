@@ -348,6 +348,14 @@ def build_embeddings(
         best, report, trials, validation_error, run_dir = search_best_embedding_setting(
             data_dir, embeddings_dir, embedding_settings, seed=seed
         )
+        _write_json(
+            {
+                "best": best.to_dict(),
+                "report": report,
+                "validation_error": validation_error,
+            },
+            embeddings_dir / "best_report.json",
+        )
         chosen = best
         output_path = embeddings_dir / f"{best.model_name}.csv"
         export_entity_embeddings(run_dir, output_path, expected_dim=expected_dim)
@@ -379,7 +387,7 @@ def build_embeddings(
         output_path = embeddings_dir / f"{chosen.model_name}_random.csv"
         # Match the exported DICE width, not the configured dimension: some
         # models store several components per dimension.
-        baseline_dim: int = -1
+        baseline_dim: int
         try:
             baseline_dim = get_csv_dimension(embeddings_dir / f"{chosen.model_name}.csv")
         except FileNotFoundError as e:
@@ -407,19 +415,24 @@ def build_embeddings(
         )
 
     report_path = embeddings_dir / "embedding_report.json"
-    with report_path.open("w", encoding="utf-8") as handle:
-        json.dump(
-            {
-                "triple_counts": counts,
-                "num_entities": len(entity_names),
-                "embedding_conditions": {
-                    name: result.to_dict() for name, result in results.items()
-                },
+    _write_json(
+        {
+            "triple_counts": counts,
+            "num_entities": len(entity_names),
+            "embedding_conditions": {
+                name: result.to_dict() for name, result in results.items()
             },
-            handle,
-            indent=2,
-        )
+        },
+        report_path,
+    )
     return results, baseline_dim
+
+def _write_json(data: dict, path: Path) -> None:
+    """Write a JSON file with indentation and a trailing newline."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+        handle.write("\n")
 
 def _entity_embedding_matrix(model: Any) -> np.ndarray:
     """Return the dense entity-embedding matrix from a loaded ``KGE``.
