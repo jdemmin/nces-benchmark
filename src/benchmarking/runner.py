@@ -67,6 +67,7 @@ def run_benchmark(
     if (
         (config.project.embedding_conditions)[0] == "random"
         and not config.project.embedding_conditions[1:]
+        and len(config.project.embedding_conditions) > 1
         ):
         logger.warning(
             "Random embeddings must follow after other embedding conditions." \
@@ -77,7 +78,7 @@ def run_benchmark(
     selected_kbs = list(knowledge_bases or config.knowledge_bases)
     selected_seeds = list(seeds or config.project.seeds)
     base = output_dir or OUTPUT_DIR
-    logger.info(
+    logger.warning(
         "benchmark_name cannot contain train, valid or test in the name."
         "Replacing them with '_trian_', '_vaild_' and '_tset_' respectively."
     )
@@ -152,6 +153,13 @@ def run_benchmark(
         "failures": failures,
     }
     _write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
+    logger.info("Proceeding to zip the benchmark results directory %s", benchmark_dir)
+    import shutil
+    shutil.make_archive(str(benchmark_dir), 'zip', str(benchmark_dir))
+    logger.info("Completed zipping the benchmark results directory %s", benchmark_dir)
+    # logger.info("Proceeding to remove the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
+    # shutil.rmtree(benchmark_dir)
+    # logger.info("Completed removal of the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
     return summary
 
 
@@ -175,7 +183,7 @@ def run_single(
     handler = configure_logging(paths.logs_dir / f"{knowledge_base_name}_{seed}.log")
     started = time.perf_counter()
     try:
-        ontology_parse_result = _stage_parse_ontology(kb_path)
+        ontology_parse_result = _stage_parse_ontology(kb_path, seed=seed)
         knowledge_base = ontology_parse_result.knowledge_base
         logger.info("Completed Stage 1: Ontology parsing.")
         problems = generate_learning_problems(
@@ -392,8 +400,6 @@ def _embedding_stage(
     ) -> tuple[dict[str, EmbeddingResultDice], int]:
     """
     Run the embedding stage and return the report.
-    Creates a temporary data directory to avoid triggering dicee path checks.
-    Copies the embeddings to the run's embeddings directory so nothing is lost.
     """
 
     report, m = build_embeddings(
@@ -415,10 +421,10 @@ def _write_json(payload: dict[str, Any], path: Path) -> None:
     logger.info("Wrote %s", path)
 
 
-def _stage_parse_ontology(kb_path: Path) -> OntologyParseResult:
+def _stage_parse_ontology(kb_path: Path, seed: int) -> OntologyParseResult:
     """Parse the ontology and return triples and individual IRIs."""
 
-    triples = parse_triples(kb_path)
+    triples = parse_triples(kb_path, seed=seed)
     knowledge_base = load_knowledge_base(kb_path)
     all_individuals = individual_iris(knowledge_base)
     return OntologyParseResult(
