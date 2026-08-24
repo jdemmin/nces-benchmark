@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from random import shuffle
 from typing import Any, cast
 
 from src.benchmarking.metrics import (
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def prepare_nces_training_data(
-     problems: Sequence[LearningProblem], path: Path
+     problems: Sequence[LearningProblem], path: Path, seed: int
  ) -> list[tuple[str, dict[str, list[str]]]]:
     """Build and persist the NCES training data.
 
@@ -54,7 +54,9 @@ def prepare_nces_training_data(
             indent=2,
             ensure_ascii=False,
         )
-    return data
+    sorted_data = sorted(data, key=lambda x: x[0])
+    random.Random(seed).shuffle(sorted_data)
+    return sorted_data
 
 
 def build_nces(
@@ -224,11 +226,7 @@ def evaluate_nces(
     Each hypothesis is rendered to DL syntax, its extension is computed with
     the reasoner, and the extension is compared to the target extension.
     """
-    from ontolearn.learning_problem import PosNegLPStandard
-    from owlapy.class_expression import OWLClassExpression
-    from owlapy.owl_individual import OWLNamedIndividual
-    from owlapy.render import DLSyntaxObjectRenderer
-
+    
     if not problems:
         logger.warning(
             "No learning problems provided for evaluation; returning empty results."
@@ -245,9 +243,56 @@ def evaluate_nces(
             number_of_problems=0,
             number_of_successful_problems=0,
         )
-    true_trained_model_path = trained_models_dir
+    eval_timer = time.perf_counter()
+    model = build_nces(
+        kb_path,
+        embeddings_path,
+        _get_valid_dir_path(trained_models_dir, settings),
+        settings,
+        load_pretrained=True,
+        m=m,
+    )
+    # Evaluate each learning problem (fit) and collect the results.
+    records = _build_records(
+        problems=problems,
+        model=model,
+        knowledge_base=knowledge_base,
+        target_extensions=target_extensions,
+        all_individuals=all_individuals,
+    )
+    final_time = round(time.perf_counter() - eval_timer, 3)
+    scored = [record for record in records if record.error is None]
+    logger.info("Collecting mean metrics across %d successful problems", len(scored))
+    mean_metrics = mean_results([
+        record.metrics for record in scored 
+        if record is not None and record.metrics is not None and record.error is None
+    ])
+    logger.info("Finished computing mean metrics across %d successful problems", len(scored))
+    logger.info(
+        "NCES evaluation completed in %.3f seconds: %d problems, %d successful",
+        time.perf_counter() - eval_timer,
+        len(records),
+        len(scored),
+    )
+    return EmbeddingResult(
+        split_name=split_name,
+        number_of_problems=len(records),
+        number_of_successful_problems=len(scored),
+        mean_metrics=mean_metrics,
+        learning_problem_results=sorted(records, key=lambda r: r.learning_problem.target_concept),
+        embedding_settings=trained_model_settings,
+        nces_stats=NCESStats(
+            learner_name=settings.learner_name,
+            runtime_seconds=final_time,
+            degraded=False,
+        ),
+    )
+
+
+def _get_valid_dir_path(path: Path, nces_settings: NCESSettings) -> Path:
+    true_trained_model_path = path
     try:
-        assert_model_dir_contains_needed_files(true_trained_model_path, settings)
+        assert_model_dir_contains_needed_files(true_trained_model_path, nces_settings)
     except FileNotFoundError as e:
         try:
             logger.warning(
@@ -255,7 +300,7 @@ def evaluate_nces(
                 "Checking the 'trained_models' subdirectory.",
                 true_trained_model_path,
             )
-            assert_model_dir_contains_needed_files(true_trained_model_path / "trained_models", settings)
+            assert_model_dir_contains_needed_files(true_trained_model_path / "trained_models", nces_settings)
             true_trained_model_path = true_trained_model_path / "trained_models"
             logger.info(
                 "Found expected files in the 'trained_models' subdirectory: %s",
@@ -269,15 +314,18 @@ def evaluate_nces(
                 true_trained_model_path,
             )
             raise e
-    eval_timer = time.perf_counter()
-    model = build_nces(
-        kb_path,
-        embeddings_path,
-        true_trained_model_path,
-        settings,
-        load_pretrained=True,
-        m=m,
-    )
+    return true_trained_model_path
+
+def _fingerprint(net) -> float:
+    return sum(float(p.detach().abs().sum()) for p in net.parameters())
+
+# TODO: Keep track of the signature of the function to avoid accidental changes that break the benchmark.
+def _build_records(problems, model, knowledge_base, target_extensions, all_individuals) -> list[LearningProblemResult]:
+    from ontolearn.learning_problem import PosNegLPStandard
+    from owlapy.class_expression import OWLClassExpression
+    from owlapy.owl_individual import OWLNamedIndividual
+    from owlapy.render import DLSyntaxObjectRenderer
+
     renderer = DLSyntaxObjectRenderer()
     records: list[LearningProblemResult] = []
     for problem in problems:
@@ -366,37 +414,7 @@ def evaluate_nces(
             runtime=round(runtime, 3),
         )
         records.append(learning_problem_result)
-    scored = [record for record in records if record.error is None]
-    final_time = round(time.perf_counter() - eval_timer, 3)
-    logger.info("Collecting mean metrics across %d successful problems", len(scored))
-    mean_metrics = mean_results([
-        record.metrics for record in scored 
-        if record is not None and record.metrics is not None and record.error is None
-    ])
-    logger.info("Finished computing mean metrics across %d successful problems", len(scored))
-    logger.info(
-        "NCES evaluation completed in %.3f seconds: %d problems, %d successful",
-        time.perf_counter() - eval_timer,
-        len(records),
-        len(scored),
-    )
-    return EmbeddingResult(
-        split_name=split_name,
-        number_of_problems=len(records),
-        number_of_successful_problems=len(scored),
-        mean_metrics=mean_metrics,
-        learning_problem_results=records,
-        embedding_settings=trained_model_settings,
-        nces_stats=NCESStats(
-            learner_name=settings.learner_name,
-            runtime_seconds=final_time,
-            degraded=False,
-        ),
-    )
-
-
-def _fingerprint(net) -> float:
-    return sum(float(p.detach().abs().sum()) for p in net.parameters())
+    return records
 
 
 def assert_model_dir_contains_needed_files(

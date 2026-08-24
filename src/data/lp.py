@@ -17,6 +17,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from rdflib import OWL, RDF
+
 from src.config import DataGenerationSettings
 from src.data.complexity import Complexity, Hardness, structural_complexity
 from src.data.ontology import local_name
@@ -145,11 +147,7 @@ class LearningProblem(LearningProblemTruncated):
         return self._with_complexity(complexity=complexity)
 
     def annotate_hardness(self, complexity: Complexity, hardness: Hardness) -> LearningProblem:
-            """Return a copy carrying an updated hardness object for a given complexity."""
-            return self._with_complexity(
-                self.annotate_complexity(complexity=complexity)
-                .complexity.with_hardness(hardness=hardness)
-            )
+        return self._with_complexity(complexity.with_hardness(hardness=hardness))
 
 def generate_learning_problems(
     kb_path: Path,
@@ -166,9 +164,7 @@ def generate_learning_problems(
     """
     from ontolearn.lp_generator import LPGen
 
-    random.seed(seed)
     storage_path.mkdir(parents=True, exist_ok=True)
-
     kwargs = settings.lpgen_kwargs(kb_path, storage_path)
     logger.info(
         "Generating up to %d learning problems for %s",
@@ -185,7 +181,8 @@ def generate_learning_problems(
         raw = json.load(handle)
 
     namespace = _infer_namespace(kb_path)
-    problems = _normalise(raw, namespace=namespace)
+    # sorts and shuffles problems too
+    problems = _normalise(raw, namespace=namespace, seed=seed)
     logger.info("Normalised %d learning problems", len(problems))
     return problems
 
@@ -196,17 +193,35 @@ def _infer_namespace(kb_path: Path) -> str:
 
     graph = Graph()
     graph.parse(str(kb_path))
-    for subject in graph.subjects():
-        if isinstance(subject, URIRef):
-            iri = str(subject)
-            for separator in ("#", "/"):
-                if separator in iri:
-                    return iri.rsplit(separator, 1)[0] + separator
+
+    # Declared ontology IRI is authoritative.
+    for onto in graph.subjects(RDF.type, OWL.Ontology):
+        if isinstance(onto, URIRef):
+            iri = str(onto)
+            return iri if iri.endswith(("#", "/")) else iri + "#"
+
+    # Fall back to the most common namespace among *named individuals*,
+    # ties broken lexicographically so the result is order-independent.
+    from collections import Counter
+
+    counts: Counter[str] = Counter()
+    for subject in graph.subjects(RDF.type, None):
+        if not isinstance(subject, URIRef):
+            continue
+        iri = str(subject)
+        if iri.startswith(("http://www.w3.org/", "http://purl.org/dc/")):
+            continue
+        for separator in ("#", "/"):
+            if separator in iri:
+                counts[iri.rsplit(separator, 1)[0] + separator] += 1
+                break
+    if counts:
+        return min(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0]
     return ""
 
 
 def _normalise(
-    raw: Iterable[Any], *, namespace: str
+    raw: Iterable[Any], *, namespace: str, seed: int
 ) -> list[LearningProblem]:
     """Convert ontolearn's ``LPs.json`` payload into learning problems."""
 
@@ -215,9 +230,8 @@ def _normalise(
         entries = list(raw.items())
     else:
         entries = [(item[0], item[1]) for item in raw]
-
     problems: list[LearningProblem] = []
-    for index, (target_concept, examples) in enumerate(entries):
+    for target_concept, examples in sorted(entries, key=lambda x: x[0]):
         positives = _expand(examples.get(_POS_KEY, []), namespace)
         negatives = _expand(examples.get(_NEG_KEY, []), namespace)
         if not positives or not negatives:
@@ -225,13 +239,15 @@ def _normalise(
             continue
         problems.append(
             LearningProblem(
-                id=f"lp_{index:04d}",
+                id=f"lp_{len(problems):04d}",
                 target_concept=target_concept,
                 pos_example=sorted(positives),
                 neg_example=sorted(negatives),
                 complexity=structural_complexity(target_concept),
             )
         )
+    # problems.sort(key=lambda p: p.target_concept)
+    random.Random(seed).shuffle(problems)
     return problems
 
 
@@ -269,32 +285,39 @@ def load_learning_problems(path: Path) -> list[LearningProblem]:
 
     with path.open(encoding="utf-8") as handle:
         grouped = json.load(handle)
-    return [
+    problems = [
         LearningProblem.from_dict(payload)
         for problems in grouped.values()
         for payload in problems
     ]
+    problems.sort(key=lambda p: p.id)
+    return problems
+
+
+_CONTINUOUS = {"extension_ratio", "atomic_baseline_f1"}
 
 def _get_strata_key(stratify_by: str | None, problem: LearningProblem) -> str:
-    """
-    Return a string key for stratifying learning problems.
-    Missing or invalid keys default to DL-expression length.
-    """
-
     if problem is None:
         raise AttributeError("Cannot get strata key: Problem is None")
-    strata_target = problem.complexity
-    invalid_strata = (
-        stratify_by is None
-        or stratify_by not in Complexity.__dataclass_fields__
-    )
+    if stratify_by is None:
+        return str(problem.complexity.dl_length)
+
     if stratify_by in Hardness.__dataclass_fields__:
-        strata_target = strata_target.hardness
-        invalid_strata = strata_target is None or strata_target.atomic_baseline_f1 is None
-    return (str(problem.complexity.dl_length)
-            if invalid_strata 
-            else str(getattr(strata_target, stratify_by)) # type: ignore //Already validated that stratify_by is a valid field of Complexity or Hardness
-    ) 
+        hardness = problem.complexity.hardness
+        if hardness is None or not problem.complexity.is_annotated:
+            raise ValueError(
+                f"Cannot stratify by {stratify_by!r}: problem {problem.id} "
+                f"is not hardness-annotated. Run the annotation stage first."
+            )
+        value = getattr(hardness, stratify_by)
+        if stratify_by in _CONTINUOUS and value is not None:
+            return f"q{min(int(float(value) * 5), 4)}"  # 5 fixed quintile bins
+        return str(value)
+
+    if stratify_by in Complexity.__dataclass_fields__:
+        return str(getattr(problem.complexity, stratify_by))
+    raise ValueError(f"Unknown stratify_by field {stratify_by!r}.")
+
 
 def split_learning_problems(
     problems: Sequence[LearningProblem],
@@ -315,6 +338,11 @@ def split_learning_problems(
     composition drifts across seeds, which inflates apparent variance between
     embedding conditions.
     """
+    def _key_order(k: str) -> tuple[int, float, str]:
+        try:
+            return (0, float(k), "")
+        except ValueError:
+            return (1, 0.0, k)
 
     if not problems or len(problems) < 2:
         raise ValueError(
@@ -323,6 +351,8 @@ def split_learning_problems(
             f"stratification. Got {len(problems)} problems."
         )
 
+    if not (0 < ratios[0] < 1 and 0 < ratios[1] < 1 and ratios[0] + ratios[1] == 1):
+        raise ValueError(f"Invalid ratios {ratios}: must be positive and sum to 1.")
     strata = {}
     for problem in problems:
         strata.setdefault(_get_strata_key(stratify_by, problem), []).append(problem)
@@ -331,31 +361,23 @@ def split_learning_problems(
         "train": [], "test": [],
     }
 
-    for key in sorted(strata):
+    for key in sorted(strata, key=_key_order):
         stratum = sorted(strata[key], key=lambda p: p.id)
-        random.Random(seed).shuffle(stratum)
+        random.Random(f"{seed}:{key}").shuffle(stratum)
         total = len(stratum)
-        if 0 < ratios[0] < 1 and 0 < ratios[1] < 1 and ratios[0] + ratios[1] == 1:
-            n_train = max(1, int(total * ratios[0]))
-            split["train"].extend(stratum[:n_train])
-            split["test"].extend(stratum[n_train:])
-        else:
-            raise ValueError(f"Invalid ratios {ratios}: must be positive and sum to 1.")
+        n_train = max(1, int(total * ratios[0]))
+        split["train"].extend(stratum[:n_train])
+        split["test"].extend(stratum[n_train:])
 
     if not split["test"]:
         # Guarantee a non-empty test split, as the unstratified path did.
         split["test"] = [split["train"].pop()]
 
-    return _sort_then_shuffle_splits(split, seed=seed)
+    for name in ("train", "test"):
+        split[name].sort(key=lambda p: (p.target_concept, p.id))
+        random.Random(f"{seed}:{name}").shuffle(split[name])
+    return split
 
-
-def _sort_then_shuffle_splits(splits: dict[str, list[LearningProblem]], seed: int) -> dict[str, list[LearningProblem]]:
-    """Shuffle each split in-place with a deterministic seed."""
-    tmp_splits = splits.copy()
-    for problems in tmp_splits.values():
-        problems.sort(key=lambda p: p.id)
-        random.Random(seed).shuffle(problems)
-    return tmp_splits
 
 def save_split(
     split: dict[str, list[LearningProblem]], directory: Path

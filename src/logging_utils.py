@@ -70,14 +70,14 @@ def configure_logging(log_file: Path | None = None, *, level: int = logging.INFO
     root = logging.getLogger()
     root.setLevel(level)
 
-    if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
-        stream = logging.StreamHandler(sys.stdout)
-        formatter = ColoredFormatter(
-            fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-        stream.setFormatter(formatter)
-        root.addHandler(stream)
+    # if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
+    #     stream = logging.StreamHandler(sys.stdout)
+    #      formatter = ColoredFormatter(
+    #          fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    #          datefmt="%Y-%m-%d %H:%M:%S",
+    #     )
+    #     stream.setFormatter(formatter)
+    #     root.addHandler(stream)
 
     if log_file is None:
         return None

@@ -251,7 +251,8 @@ def run_single(
             target_extensions=target_extensions,
             embedding_report=embedding_report,
             config=config,
-            m=m
+            m=m,
+            seed=seed
         )
         logger.info(
             "Completed Stage 6: NCES training and evaluation for all conditions."
@@ -486,7 +487,7 @@ def _stage_train_eval_nces(
         target_extensions: dict[str, frozenset[str]], 
         embedding_report: dict[str, EmbeddingResultDice], 
         m: int,
-        config: BenchmarkConfiguration
+        config: BenchmarkConfiguration, seed: int
     ) -> SingleRunResult:
     """
     Train and evaluate NCES for each embedding condition.
@@ -494,7 +495,7 @@ def _stage_train_eval_nces(
     """
     
     train_data = prepare_nces_training_data(
-        split["train"], paths.nces_data_dir / "nces_train_data.json"
+        split["train"], paths.nces_data_dir / "nces_train_data.json", seed=seed
     )
     logger.info("Prepared NCES training data")
     conditions: dict[str, EmbeddingResult] = {}
