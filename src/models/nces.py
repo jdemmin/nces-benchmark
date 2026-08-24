@@ -258,6 +258,10 @@ def evaluate_nces(
             )
             assert_model_dir_contains_needed_files(true_trained_model_path / "trained_models", settings)
             true_trained_model_path = true_trained_model_path / "trained_models"
+            logger.info(
+                "Found expected files in the 'trained_models' subdirectory: %s",
+                true_trained_model_path,
+            )
         except FileNotFoundError:
             logger.error(
                 "Trained model directory '%s' does not contain the expected files. "

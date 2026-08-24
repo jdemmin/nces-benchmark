@@ -33,15 +33,13 @@ from src.data.results import (
     KnowledgeBaseFailure,
     KnowledgeBaseResult,
     KnowledgeBaseStats,
+    MeanMetricsResult,
     OntologyParseResult,
     SingleRunResult,
 )
 from src.logging_utils import configure_logging
 from src.models.dice import EmbeddingResultDice, build_embeddings
 from src.models.nces import (
-    EmbeddingResult,
-    NCESStats,
-    assert_model_dir_contains_needed_files,
     evaluate_nces,
     prepare_nces_training_data,
     train_nces,
@@ -110,13 +108,7 @@ def run_benchmark(
                 failures.append(knowledge_base_failure)
                 continue
             reports.append(report)
-        random_mean = mean_embeddings_results(
-            [r.random_embedding_result for r in reports if r.random_embedding_result is not None]
-        )
-        dice_mean = mean_embeddings_results(
-            [r.dice_embedding_result for r in reports if r.dice_embedding_result is not None]
-        )
-        random_complexity_summary = get_complexity_summary([
+        complexity_summary = get_complexity_summary([
             # flattens list of lists of LearningProblemResults into a single list
             item for sublist in [
                 r.random_embedding_result.learning_problem_results
@@ -124,7 +116,11 @@ def run_benchmark(
             ]
             for item in sublist
         ])
-        dice_complexity_summary = get_complexity_summary([
+        _write_json(
+            payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
+            path=benchmark_dir / f"{kb_name}_mean_across_seeds_random_complexity_summary.json",
+        )
+        complexity_summary = get_complexity_summary([
             # flattens list of lists of LearningProblemResults into a single list
             item for sublist in [
                 r.dice_embedding_result.learning_problem_results
@@ -133,12 +129,14 @@ def run_benchmark(
             for item in sublist
         ])
         _write_json(
-            payload=random_complexity_summary,
-            path=benchmark_dir / f"{kb_name}_mean_across_seeds_random_complexity_summary.json",
-        )
-        _write_json(
-            payload=dice_complexity_summary,
+            payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
             path=benchmark_dir / f"{kb_name}_mean_across_seeds_dice_complexity_summary.json",
+        )
+        random_mean = mean_embeddings_results(
+            [r.random_embedding_result for r in reports if r.random_embedding_result is not None]
+        )
+        dice_mean = mean_embeddings_results(
+            [r.dice_embedding_result for r in reports if r.dice_embedding_result is not None]
         )
         knowledge_base_result = KnowledgeBaseResult(
             knowledge_base=kb_name,
@@ -261,7 +259,7 @@ def run_single(
             if single_run_result.dice_embedding_result else []
         )
         _write_json(
-            payload=dice_complexity_summary,
+            payload=dict(sorted(_convert_complexity_summary_to_dict(dice_complexity_summary).items())),
             path=paths.nces_results_dir / "dice_complexity_summary.json",
         )
         random_complexity_summary = get_complexity_summary(
@@ -269,7 +267,7 @@ def run_single(
             if single_run_result.random_embedding_result else []
         )
         _write_json(
-            payload=random_complexity_summary,
+            payload=dict(sorted(_convert_complexity_summary_to_dict(random_complexity_summary).items())),
             path=paths.nces_results_dir / "random_complexity_summary.json",
         )
         logger.info(
@@ -287,19 +285,52 @@ def run_single(
             number_of_atomic_classes=len(atomic_extensions),
         )
         _write_json(
-            payload=knowledge_base_stats.__dict__,
+            payload=knowledge_base_stats.to_dict(),
             path=paths.kb_dir / f"knowledge_base_stats_{seed}.json",
         )
         logger.info(
             "Wrote knowledge-base stats to %s",
             paths.kb_dir / f"knowledge_base_stats_{seed}.json",
         )
+        _remove_trials(path=paths.embeddings_dir)
         return single_run_result 
     finally:
         if handler is not None:
             logging.getLogger().removeHandler(handler)
             handler.close()
         
+
+def _remove_trials(path: Path) -> None:
+    """Remove embeddings that are not used in the benchmark run."""
+
+    logger.info(
+        "Proceeding to remove unused embedding files with keyword ``trial`` in %s", path
+    )
+    for dir in path.iterdir():
+        if dir.is_dir() and "trial" in dir.name:
+            for subfile in dir.iterdir():
+                if subfile.is_file():
+                    logger.info("Removing unused embedding file %s", subfile)
+                    subfile.unlink()
+            dir.rmdir()
+    logger.info(
+        "Completed removal of unused embedding files with keyword ``trial`` in %s", path
+    )
+
+
+def _convert_complexity_summary_to_dict(
+        complexity_summary: dict[str, dict[str, MeanMetricsResult]]
+    ) -> dict[str, dict[str, dict[str, float]]]:
+    """Convert a complexity summary to a dictionary of dictionaries of dictionaries."""
+
+    return {
+        axis: {
+            complexity_value: mean_metrics.to_dict()
+            for complexity_value, mean_metrics in complexity_dict.items()
+        }
+        for axis, complexity_dict in complexity_summary.items()
+    }
+
 
 def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
     """Log the spread along each complexity axis.
@@ -496,25 +527,6 @@ def _stage_train_eval_nces(
             condition,
             embeddings_file_path,
         )
-        try:
-            assert_model_dir_contains_needed_files(trained_model_path, config.nces)
-        except FileNotFoundError as e:
-            try:
-                logger.warning(
-                    "Trained model directory '%s' does not contain the expected files. "
-                    "Checking the 'trained_models' subdirectory.",
-                    trained_model_path,
-                )
-                assert_model_dir_contains_needed_files(trained_model_path / "trained_models", config.nces)
-                trained_model_path = trained_model_path / "trained_models"
-            except FileNotFoundError:
-                logger.error(
-                    "Trained model directory '%s' does not contain the expected files. "
-                    "Please ensure that the NCES model was trained correctly and that the "
-                    "trained model files are present in the directory.",
-                    trained_model_path,
-                )
-                raise e
         evaluation = evaluate_nces(
             kb_path=kb_path,
             embeddings_path=Path(embeddings_file_path),

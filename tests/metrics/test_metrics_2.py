@@ -52,7 +52,7 @@ class FakeComplexity:
     dl_length: int = 1
     depth: int = 1
     expressivity: str = "ALC"
-    num_constructors: dict[str, int] = field(default_factory=dict)
+    constructors: dict[str, int] = field(default_factory=dict)
     num_atomic_classes: int = 1
     num_roles: int = 0
     hardness: FakeHardness = field(default_factory=FakeHardness)
@@ -821,7 +821,7 @@ class TestComplexityAxes:
             dl_length=9,
             depth=3,
             expressivity="ALCHIQ(D)",
-            num_constructors={"and": 4, "exists": 1},
+            constructors={"and": 4, "exists": 1},
             num_atomic_classes=6,
             num_roles=2,
             hardness=FakeHardness(extension_ratio=0.4),
@@ -840,8 +840,8 @@ class TestComplexityAxes:
         Two concepts with wildly different constructor totals land in the
         same bucket if they use the same *kinds*.
         """
-        few = FakeComplexity(num_constructors={"and": 1, "exists": 1})
-        many = FakeComplexity(num_constructors={"and": 99, "exists": 50})
+        few = FakeComplexity(constructors={"and": 1, "exists": 1})
+        many = FakeComplexity(constructors={"and": 99, "exists": 50})
 
         assert COMPLEXITY_AXES["constructors"](few) == 2
         assert COMPLEXITY_AXES["constructors"](many) == 2
