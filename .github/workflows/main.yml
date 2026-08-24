@@ -14,6 +14,7 @@ concurrency:
 env:
   IMAGE_NAME: nces-benchmark-v2
   IMAGE_TAG: ci-${{ github.sha }}
+  DOCKER_RUN_OPTS: --rm --ipc=host -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1
 
 jobs:
   build-and-test:
