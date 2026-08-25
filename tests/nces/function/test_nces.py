@@ -294,7 +294,7 @@ class TestPrepareTrainingData:
         ]
         target = tmp_path / "nested" / "train.json"
 
-        data = prepare_nces_training_data(problems, target)
+        data = prepare_nces_training_data(problems, target, seed=1)
 
         assert data == [
             (
@@ -330,7 +330,7 @@ class TestPrepareTrainingData:
             make_problem("lp_0001", "A", pos=[f"{NS}c"], neg=[f"{NS}d"]),
         ]
 
-        data = prepare_nces_training_data(problems, tmp_path / "train.json")
+        data = prepare_nces_training_data(problems, tmp_path / "train.json", seed=1)
 
         assert len(data) == 2
         assert [concept for concept, _ in data] == ["A", "A"]
@@ -348,7 +348,7 @@ class TestPrepareTrainingData:
         ]
 
         with caplog.at_level("WARNING", logger="src.models.nces"):
-            prepare_nces_training_data(problems, tmp_path / "train.json")
+            prepare_nces_training_data(problems, tmp_path / "train.json", seed=1)
 
         assert len(caplog.records) == 1
         message = caplog.records[0].getMessage()
@@ -363,7 +363,7 @@ class TestPrepareTrainingData:
         problems = [make_problem(f"lp_{i:04d}", f"C{i}") for i in range(3)]
 
         with caplog.at_level("WARNING", logger="src.models.nces"):
-            prepare_nces_training_data(problems, tmp_path / "train.json")
+            prepare_nces_training_data(problems, tmp_path / "train.json", seed=1)
 
         assert caplog.records == []
 
@@ -372,7 +372,7 @@ class TestPrepareTrainingData:
 
         concept = "∃ hasChild.(Male ⊔ ¬Female)"
         path = tmp_path / "train.json"
-        prepare_nces_training_data([make_problem("lp_0000", concept)], path)
+        prepare_nces_training_data([make_problem("lp_0000", concept)], path, seed=1)
 
         raw = path.read_text(encoding="utf-8")
         assert concept in raw  # ensure_ascii=False
@@ -1259,7 +1259,7 @@ class TestPipelineIntegration:
         ]
 
         data = prepare_nces_training_data(
-            train_problems, tmp_path / "nces" / "data" / "train.json"
+            train_problems, tmp_path / "nces" / "data" / "train.json", seed=1,
         )
 
         # Upstream's best-weights bug is the common case on tiny splits, so
