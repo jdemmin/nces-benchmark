@@ -189,7 +189,7 @@ def _save_final_weights(model, trained_models_dir: Path, settings: NCESSettings)
         torch.save(
             net.state_dict(), models_dir / f"trained_{learner_name}.pt"
         )
-        logger.info(_fingerprint(net))
+        logger.info(f"Recorded net fingerprint: {_fingerprint(net)}.")
 
     with (models_dir / "config.json").open("w", encoding="utf-8") as handle:
         _json.dump(
@@ -225,6 +225,7 @@ def evaluate_nces(
     split_name: str,
     trained_model_settings: EmbeddingSettings,
     seed: int,
+    degraded: bool,
 ) -> EmbeddingResult:
     """Evaluate the trained NCES learner on a held-out learning-problem split.
 
@@ -243,7 +244,7 @@ def evaluate_nces(
             nces_stats=NCESStats(
                 learner_name=settings.learner_name,
                 runtime_seconds=0.0,
-                degraded=False,
+                degraded=degraded,
             ),
             number_of_problems=0,
             number_of_successful_problems=0,
@@ -291,7 +292,7 @@ def evaluate_nces(
         nces_stats=NCESStats(
             learner_name=settings.learner_name,
             runtime_seconds=final_time,
-            degraded=False,
+            degraded=degraded,
         ),
     )
 
@@ -345,7 +346,7 @@ def _build_records(
     for problem in sorted(problems, key=lambda p: p.id):
         positives = {OWLNamedIndividual(iri) for iri in sorted(problem.pos_example)}
         negatives = {OWLNamedIndividual(iri) for iri in sorted(problem.neg_example)}
-        lp = PosNegLPStandard(pos=positives, neg=negatives)
+        lp = PosNegLPStandard(pos=set(positives), neg=set(negatives))
         started = time.perf_counter()
         try:
             seed_everything(seed)  # Ensure reproducibility for NCES fitting

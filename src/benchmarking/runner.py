@@ -560,6 +560,7 @@ def _stage_train_eval_nces(
             m=m,
             trained_model_settings=embedding_report[condition].embedding_settings,
             seed=seed,
+            degraded=training.degraded,
         )
         logger.info(
             "Completed NCES evaluation for condition '%s'.",
