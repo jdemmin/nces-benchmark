@@ -132,3 +132,14 @@ def population():
 @pytest.fixture
 def annotated_population():
     return make_problems(60, annotate=True)
+
+
+# def pytest_configure(config):
+#     """Re-exec under a fixed hash seed so set iteration order is stable.
+
+#     Ontolearn's LPGen samples from unordered sets of IRI strings, so
+#     PYTHONHASHSEED leaks into the generated learning problems.
+#     """
+#     if os.environ.get("PYTHONHASHSEED") != "0":
+#         os.environ["PYTHONHASHSEED"] = "0"
+#         os.execv(sys.executable, [sys.executable, "-m", "pytest", *sys.argv[1:]])

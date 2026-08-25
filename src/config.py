@@ -479,7 +479,7 @@ class ProjectSettings:
             embedding_conditions=list(
                 payload.get("embedding_conditions", EMBEDDING_CONDITIONS)
             ),
-            stratify_by=str(payload.get("stratify_by", "depth")),
+            stratify_by=str(payload.get("stratify_by", cls.stratify_by)),
         )
 
 @dataclass(frozen=True)

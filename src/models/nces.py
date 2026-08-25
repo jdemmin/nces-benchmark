@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -54,9 +53,7 @@ def prepare_nces_training_data(
             indent=2,
             ensure_ascii=False,
         )
-    sorted_data = sorted(data, key=lambda x: x[0])
-    random.Random(seed).shuffle(sorted_data)
-    return sorted_data
+    return data
 
 
 def build_nces(
@@ -279,7 +276,7 @@ def evaluate_nces(
         number_of_problems=len(records),
         number_of_successful_problems=len(scored),
         mean_metrics=mean_metrics,
-        learning_problem_results=sorted(records, key=lambda r: r.learning_problem.target_concept),
+        learning_problem_results=sorted(records, key=lambda r: r.learning_problem.id),
         embedding_settings=trained_model_settings,
         nces_stats=NCESStats(
             learner_name=settings.learner_name,
@@ -379,7 +376,7 @@ def _build_records(problems, model, knowledge_base, target_extensions, all_indiv
             target = concept_extension(knowledge_base, problem.target_concept)
             target = target or frozenset(problem.pos_example)
 
-        runtime = time.perf_counter() - started
+        runtime = round(time.perf_counter() - started, 3)
         metrics = calculate_metrics(predicted, target, all_individuals)
         lift = compute_lift(complexity=problem.complexity, f1=metrics.f1)
         if lift is None:
@@ -411,7 +408,7 @@ def _build_records(problems, model, knowledge_base, target_extensions, all_indiv
                 negative=len(negative_extension),
             ),
             metrics=metric_result,
-            runtime=round(runtime, 3),
+            runtime=runtime,
         )
         records.append(learning_problem_result)
     return records

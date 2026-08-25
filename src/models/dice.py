@@ -116,7 +116,7 @@ def write_dicee_dataset(
 
     directory.mkdir(parents=True, exist_ok=True)
     shuffled = [triple.as_tuple() for triple in triples]
-    random.Random(seed).shuffle(shuffled)
+    # random.Random(seed).shuffle(shuffled)
 
     total = len(shuffled)
     n_train = max(1, int(total * ratios[0]))
@@ -335,6 +335,7 @@ def build_embeddings(
     trial's entity embeddings. The ``random`` condition reuses the entity
     vocabulary and the selected dimensionality but never trains.
     """
+    
     triples = parse_triples(kb_path, seed=seed)
     counts = write_dicee_dataset(triples, data_dir, seed=seed)
 

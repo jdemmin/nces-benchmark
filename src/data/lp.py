@@ -9,9 +9,10 @@ find a concept expression ``C`` such that in ``K' = K ∪ {T ≡ C}`` every
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import logging
-import random
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -164,6 +165,8 @@ def generate_learning_problems(
     """
     from ontolearn.lp_generator import LPGen
 
+    _set_seed(seed)
+
     storage_path.mkdir(parents=True, exist_ok=True)
     kwargs = settings.lpgen_kwargs(kb_path, storage_path)
     logger.info(
@@ -181,7 +184,6 @@ def generate_learning_problems(
         raw = json.load(handle)
 
     namespace = _infer_namespace(kb_path)
-    # sorts and shuffles problems too
     problems = _normalise(raw, namespace=namespace, seed=seed)
     logger.info("Normalised %d learning problems", len(problems))
     return problems
@@ -194,11 +196,14 @@ def _infer_namespace(kb_path: Path) -> str:
     graph = Graph()
     graph.parse(str(kb_path))
 
-    # Declared ontology IRI is authoritative.
-    for onto in graph.subjects(RDF.type, OWL.Ontology):
-        if isinstance(onto, URIRef):
-            iri = str(onto)
-            return iri if iri.endswith(("#", "/")) else iri + "#"
+    onto_iris = sorted(
+        str(o)
+        for o in graph.subjects(RDF.type, OWL.Ontology)
+        if isinstance(o, URIRef)
+    )
+    if onto_iris:
+        iri = onto_iris[0]
+        return iri if iri.endswith(("#", "/")) else iri + "#"
 
     # Fall back to the most common namespace among *named individuals*,
     # ties broken lexicographically so the result is order-independent.
@@ -220,6 +225,20 @@ def _infer_namespace(kb_path: Path) -> str:
     return ""
 
 
+def _set_seed(seed: int) -> None:
+    """Set the random seed for reproducibility."""
+    import random
+
+    import numpy as np
+    import torch
+    
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 def _normalise(
     raw: Iterable[Any], *, namespace: str, seed: int
 ) -> list[LearningProblem]:
@@ -239,15 +258,14 @@ def _normalise(
             continue
         problems.append(
             LearningProblem(
-                id=f"lp_{len(problems):04d}",
+                id=_stable_id(target_concept, positives, negatives),
                 target_concept=target_concept,
                 pos_example=sorted(positives),
                 neg_example=sorted(negatives),
                 complexity=structural_complexity(target_concept),
             )
         )
-    # problems.sort(key=lambda p: p.target_concept)
-    random.Random(seed).shuffle(problems)
+    problems.sort(key=lambda p: p.id)
     return problems
 
 
@@ -269,7 +287,8 @@ def save_learning_problems(
     """Serialize learning problems grouped by complexity level."""
 
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for problem in problems:
+    problems_tmp = copy.deepcopy(problems)
+    for problem in problems_tmp:
         # Grouping by DL-expression length is a coarse proxy for difficulty,
         # but it is easy to compute and can be used to stratify the train/test split.
         grouped.setdefault(str(problem.complexity.dl_length), []).append(problem.to_dict())
@@ -277,7 +296,7 @@ def save_learning_problems(
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         json.dump(grouped, handle, indent=2, ensure_ascii=False)
-    logger.info("Wrote %d learning problems to %s", len(problems), path)
+    logger.info("Wrote %d learning problems to %s", len(problems_tmp), path)
 
 
 def load_learning_problems(path: Path) -> list[LearningProblem]:
@@ -319,6 +338,13 @@ def _get_strata_key(stratify_by: str | None, problem: LearningProblem) -> str:
     raise ValueError(f"Unknown stratify_by field {stratify_by!r}.")
 
 
+def _key_order(k: str) -> tuple[int, float, str]:
+    try:
+        return (0, float(k), "")
+    except ValueError:
+        return (1, 0.0, k)
+
+
 def split_learning_problems(
     problems: Sequence[LearningProblem],
     *,
@@ -338,22 +364,16 @@ def split_learning_problems(
     composition drifts across seeds, which inflates apparent variance between
     embedding conditions.
     """
-    def _key_order(k: str) -> tuple[int, float, str]:
-        try:
-            return (0, float(k), "")
-        except ValueError:
-            return (1, 0.0, k)
 
     if not problems or len(problems) < 2:
         raise ValueError(
             f"At least two learning problems are required for a split. "
-            f"It might require even more depending on the ratios and "
             f"stratification. Got {len(problems)} problems."
         )
 
     if not (0 < ratios[0] < 1 and 0 < ratios[1] < 1 and ratios[0] + ratios[1] == 1):
         raise ValueError(f"Invalid ratios {ratios}: must be positive and sum to 1.")
-    strata = {}
+    strata: dict[str, list[LearningProblem]] = {}
     for problem in problems:
         strata.setdefault(_get_strata_key(stratify_by, problem), []).append(problem)
 
@@ -362,10 +382,10 @@ def split_learning_problems(
     }
 
     for key in sorted(strata, key=_key_order):
-        stratum = sorted(strata[key], key=lambda p: p.id)
-        random.Random(f"{seed}:{key}").shuffle(stratum)
+        stratum = sorted(strata[key], key=lambda p: (_split_score(seed, p.id), p.id))
         total = len(stratum)
-        n_train = max(1, int(total * ratios[0]))
+        n_train = max(1, round(total * ratios[0]))
+        n_train = min(n_train, total)          # keep at least 0 for test
         split["train"].extend(stratum[:n_train])
         split["test"].extend(stratum[n_train:])
 
@@ -374,8 +394,7 @@ def split_learning_problems(
         split["test"] = [split["train"].pop()]
 
     for name in ("train", "test"):
-        split[name].sort(key=lambda p: (p.target_concept, p.id))
-        random.Random(f"{seed}:{name}").shuffle(split[name])
+        split[name].sort(key=lambda p: p.id)
     return split
 
 
@@ -391,3 +410,22 @@ def save_split(
             "w", encoding="utf-8"
         ) as handle:
             json.dump(payload, handle, indent=2, ensure_ascii=False)
+
+def _stable_id(target_concept: str, positives: list[str], negatives: list[str]) -> str:
+    h = hashlib.sha256()
+    h.update(target_concept.encode("utf-8"))
+    h.update(b"\x00")
+    for iri in sorted(positives):
+        h.update(iri.encode("utf-8"))
+        h.update(b"\x01")
+    h.update(b"\x00")
+    for iri in sorted(negatives):
+        h.update(iri.encode("utf-8"))
+        h.update(b"\x01")
+    return f"lp_{h.hexdigest()[:12]}"
+
+
+def _split_score(seed: int, problem_id: str) -> float:
+    """Deterministic per-problem score, independent of all other problems."""
+    digest = hashlib.sha256(f"{seed}:{problem_id}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") / float(1 << 64)

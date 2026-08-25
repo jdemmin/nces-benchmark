@@ -78,7 +78,6 @@ def parse_triples(kb_path: Path, seed: int) -> list[Triple]:
 
     logger.info("Parsed %d RDF triples from %s", len(triples), kb_path.name)
     triples.sort(key=lambda triple: (triple.subject, triple.predicate, triple.object))
-    Random(seed).shuffle(triples)
     return triples
 
 
@@ -148,7 +147,7 @@ def compute_atomic_class_extensions(
         try:
             extension = frozenset(
                 individual.str
-                for individual in knowledge_base.individuals(owl_class)
+                for individual in sorted(knowledge_base.individuals(owl_class))
             )
         except Exception as error:  # noqa: BLE001 - upstream raises bare exceptions
             logger.warning(
