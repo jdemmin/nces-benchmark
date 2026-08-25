@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,6 +25,7 @@ from src.data.results import (
     NCESStats,
     TargetExtensionStructure,
 )
+from src.random_utils import seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,7 @@ def train_nces(
     train_data: Sequence[tuple[str, dict[str, list[str]]]],
     settings: NCESSettings,
     m: int,
+    seed: int,
 ) -> NCESStats:
     """Train NCES on the train split and save the weights.
 
@@ -114,6 +116,8 @@ def train_nces(
     place, so only the "restore the best epoch" step is lost. Catch the
     TypeError and persist the final-epoch weights instead.
     """
+
+    seed_everything(seed)  # Ensure reproducibility for NCES training
     model = build_nces(
         kb_path,
         embeddings_path,
@@ -132,11 +136,13 @@ def train_nces(
     started = time.perf_counter()
     degraded = False
     try:
+        seed_everything(seed)  # Ensure reproducibility for NCES training
         model.train(
-            cast(Any, list(train_data)),
+            data=sorted(train_data, key=lambda x: x[0]), # type: ignore // NUH UH
             epochs=settings.epochs,
             batch_size=settings.batch_size,
-            num_workers=settings.num_workers,
+            # Force single-threaded data loading for reproducibility
+            num_workers=0,
             learning_rate=settings.learning_rate,
             save_model=True,
             storage_path=str(trained_models_dir),
@@ -164,6 +170,7 @@ def train_nces(
 
 def _save_final_weights(model, trained_models_dir: Path, settings: NCESSettings) -> None:
     """Write the artifacts upstream would have written after restoring weights."""
+
     import json as _json
 
     import numpy as np
@@ -217,6 +224,7 @@ def evaluate_nces(
     all_individuals: Sequence[str],
     split_name: str,
     trained_model_settings: EmbeddingSettings,
+    seed: int,
 ) -> EmbeddingResult:
     """Evaluate the trained NCES learner on a held-out learning-problem split.
 
@@ -241,6 +249,7 @@ def evaluate_nces(
             number_of_successful_problems=0,
         )
     eval_timer = time.perf_counter()
+    seed_everything(seed)  # Ensure reproducibility for NCES evaluation
     model = build_nces(
         kb_path,
         embeddings_path,
@@ -256,6 +265,7 @@ def evaluate_nces(
         knowledge_base=knowledge_base,
         target_extensions=target_extensions,
         all_individuals=all_individuals,
+        seed=seed,
     )
     final_time = round(time.perf_counter() - eval_timer, 3)
     scored = [record for record in records if record.error is None]
@@ -317,7 +327,14 @@ def _fingerprint(net) -> float:
     return sum(float(p.detach().abs().sum()) for p in net.parameters())
 
 # TODO: Keep track of the signature of the function to avoid accidental changes that break the benchmark.
-def _build_records(problems, model, knowledge_base, target_extensions, all_individuals) -> list[LearningProblemResult]:
+def _build_records(
+        problems, 
+        model,
+        knowledge_base, 
+        target_extensions, 
+        all_individuals,
+        seed: int,
+    ) -> list[LearningProblemResult]:
     from ontolearn.learning_problem import PosNegLPStandard
     from owlapy.class_expression import OWLClassExpression
     from owlapy.owl_individual import OWLNamedIndividual
@@ -325,12 +342,13 @@ def _build_records(problems, model, knowledge_base, target_extensions, all_indiv
 
     renderer = DLSyntaxObjectRenderer()
     records: list[LearningProblemResult] = []
-    for problem in problems:
-        positives = {OWLNamedIndividual(iri) for iri in problem.pos_example}
-        negatives = {OWLNamedIndividual(iri) for iri in problem.neg_example}
+    for problem in sorted(problems, key=lambda p: p.id):
+        positives = {OWLNamedIndividual(iri) for iri in sorted(problem.pos_example)}
+        negatives = {OWLNamedIndividual(iri) for iri in sorted(problem.neg_example)}
         lp = PosNegLPStandard(pos=positives, neg=negatives)
         started = time.perf_counter()
         try:
+            seed_everything(seed)  # Ensure reproducibility for NCES fitting
             predictions = model.fit(lp)
             # returns Union type. Expect a single OWLClassExpression,
             # so check the type and raise if not.

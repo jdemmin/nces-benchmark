@@ -164,9 +164,6 @@ def generate_learning_problems(
     project schema, with positive/negative examples expanded back to full IRIs.
     """
     from ontolearn.lp_generator import LPGen
-
-    _set_seed(seed)
-
     storage_path.mkdir(parents=True, exist_ok=True)
     kwargs = settings.lpgen_kwargs(kb_path, storage_path)
     logger.info(
@@ -225,18 +222,7 @@ def _infer_namespace(kb_path: Path) -> str:
     return ""
 
 
-def _set_seed(seed: int) -> None:
-    """Set the random seed for reproducibility."""
-    import random
 
-    import numpy as np
-    import torch
-    
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
 
 def _normalise(

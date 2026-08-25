@@ -50,8 +50,11 @@ from src.paths import (
     run_paths,
     update_false_dir_names,
 )
+from src.random_utils import seed_everything
 
 logger = logging.getLogger(__name__)
+
+
 
 
 def run_benchmark(
@@ -174,6 +177,7 @@ def run_single(
 ) -> SingleRunResult:
     """Execute one benchmark run: one (knowledge base, seed) pair."""
 
+    seed_everything(seed)
     kb_path = resolve_knowledge_base(knowledge_base_name)
     paths = run_paths(
         benchmark_name,
@@ -202,6 +206,7 @@ def run_single(
         logger.info("Completed Stage 2: Learning-problem generation for %d problems.", len(problems))
         # Knowledge base only. No embedding-derived quantity may enter here, or
         # the benchmark's independent variable is contaminated.
+        seed_everything(seed)
         split = split_learning_problems(
             problems,
             seed=seed,
@@ -348,39 +353,39 @@ def _convert_complexity_summary_to_dict(
     }
 
 
-def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
-    """Log the spread along each complexity axis.
+# def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
+#     """Log the spread along each complexity axis.
 
-    Thin strata make stratified splitting degenerate -- a stratum of one or
-    two problems is handed entirely to train -- so this is the signal for
-    whether the configured ``stratify_by`` axis is viable.
-    """
+#     Thin strata make stratified splitting degenerate -- a stratum of one or
+#     two problems is handed entirely to train -- so this is the signal for
+#     whether the configured ``stratify_by`` axis is viable.
+#     """
 
-    axes: dict[str, dict[str, int]] = {
-        "dl_length": {},
-        "depth": {},
-        "expressivity": {},
-        "redundant": {},
-    }
-    for problem in problems:
-        for axis, counts in axes.items():
-            try:
-                key = str(getattr(problem.complexity, axis))
-            except AttributeError:
-                key = str(getattr(problem.complexity.hardness, axis))
-            counts[key] = counts.get(key, 0) + 1
+#     axes: dict[str, dict[str, int]] = {
+#         "dl_length": {},
+#         "depth": {},
+#         "expressivity": {},
+#         "redundant": {},
+#     }
+#     for problem in problems:
+#         for axis, counts in axes.items():
+#             try:
+#                 key = str(getattr(problem.complexity, axis))
+#             except AttributeError:
+#                 key = str(getattr(problem.complexity.hardness, axis))
+#             counts[key] = counts.get(key, 0) + 1
 
-    for axis, counts in axes.items():
-        rendered = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
-        logger.info("Complexity distribution by %s: %s", axis, rendered)
-        thin = [k for k, v in counts.items() if v < 3]
-        if thin and axis != "redundant":
-            logger.warning(
-                "Axis %r has strata with fewer than 3 learning problems (%s); "
-                "stratifying on it will starve the test split",
-                axis,
-                ", ".join(sorted(thin)),
-            )
+#     for axis, counts in axes.items():
+#         rendered = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+#         logger.info("Complexity distribution by %s: %s", axis, rendered)
+#         thin = [k for k, v in counts.items() if v < 3]
+#         if thin and axis != "redundant":
+#             logger.warning(
+#                 "Axis %r has strata with fewer than 3 learning problems (%s); "
+#                 "stratifying on it will starve the test split",
+#                 axis,
+#                 ", ".join(sorted(thin)),
+#             )
 
 
 def _order_embedding_conditions(embedding_conditions: list[str]) -> None:
@@ -500,7 +505,7 @@ def _stage_train_eval_nces(
     Train and evaluate NCES for each embedding condition.
     Writes NCES stats.
     """
-    
+    seed_everything(seed)
     train_data = prepare_nces_training_data(
         split["train"], paths.nces_data_dir / "nces_train_data.json", seed=seed
     )
@@ -526,6 +531,7 @@ def _stage_train_eval_nces(
             train_data=train_data,
             settings=config.nces,
             m=m,
+            seed=seed,
         )
         _write_json(
             payload=training.to_dict(),
@@ -553,6 +559,7 @@ def _stage_train_eval_nces(
             split_name="test",
             m=m,
             trained_model_settings=embedding_report[condition].embedding_settings,
+            seed=seed,
         )
         logger.info(
             "Completed NCES evaluation for condition '%s'.",

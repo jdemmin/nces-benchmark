@@ -16,6 +16,7 @@ import numpy as np
 from src.config import SPLIT_RATIOS, EmbeddingSettings
 from src.data.ontology import Triple, local_name, parse_triples
 from src.models.hpo_search_utils import selection_score
+from src.random_utils import seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +347,7 @@ def build_embeddings(
     chosen = embedding_settings
 
     if "dice" in embedding_conditions:
+        seed_everything(seed)
         best, report, trials, validation_error, run_dir = search_best_embedding_setting(
             data_dir, embeddings_dir, embedding_settings, seed=seed
         )
@@ -385,6 +387,7 @@ def build_embeddings(
         )
 
     if "random" in embedding_conditions:
+        seed_everything(seed)
         output_path = embeddings_dir / f"{chosen.model_name}_random.csv"
         # Match the exported DICE width, not the configured dimension: some
         # models store several components per dimension.
