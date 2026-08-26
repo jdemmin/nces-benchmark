@@ -12,51 +12,84 @@ from src.data.ontology import Triple
 
 
 @dataclass(frozen=True)
+class SingleMetric:
+    identifier: str
+    mean: float
+    variance: float
+    std_dev: float
+
+    def to_dict(self) -> dict:
+        return {
+            "identifier": self.identifier,
+            "mean": self.mean,
+            "variance": self.variance,
+            "std_dev": self.std_dev
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SingleMetric":
+        return cls(
+            identifier=data.get("identifier", ""),
+            mean=data.get("mean", 0.0),
+            variance=data.get("variance", 0.0),
+            std_dev=data.get("std_dev", 0.0)
+        )
+
+@dataclass(frozen=True)
 class MeanMetricsResult:
     """
     Represents the mean evaluation metrics 
     across multiple learning problem results.
     """
-    mean_accuracy: float
-    mean_precision: float
-    mean_recall: float
-    mean_f1_score: float
-    mean_jaccard: float
-    semantic_equivalence_rate: float
-    mean_intersection: float
-    mean_union: float
-    mean_lift: float | None
+    accuracy: SingleMetric
+    precision: SingleMetric
+    recall: SingleMetric
+    f1_score: SingleMetric
+    jaccard: SingleMetric
+    semantic_equivalence_rate: SingleMetric
+    intersection: SingleMetric
+    union: SingleMetric
+    lift: SingleMetric | None
     lp_count: int
 
     @classmethod
     def from_dict(cls, data: dict) -> "MeanMetricsResult":
-        mean_lift_data = data.get("mean_lift")
-        mean_lift_data = float(mean_lift_data) if mean_lift_data is not None else None
+        lift_mean_data = data.get("lift")
+        lift_mean_data = float(lift_mean_data) if lift_mean_data is not None else None
         return cls(
-            mean_accuracy=data.get("mean_accuracy", 0.0),
-            mean_precision=data.get("mean_precision", 0.0),
-            mean_recall=data.get("mean_recall", 0.0),
-            mean_f1_score=data.get("mean_f1_score", 0.0),
-            mean_jaccard=data.get("mean_jaccard", 0.0),
-            semantic_equivalence_rate=data.get("semantic_equivalence_rate", 0.0),
-            mean_intersection=data.get("mean_intersection", 0.0),
-            mean_union=data.get("mean_union", 0.0),
-            mean_lift=mean_lift_data,
+            accuracy=cls._get_single_metric("accuracy", data),
+            precision=cls._get_single_metric("precision", data),
+            recall=cls._get_single_metric("recall", data),
+            f1_score=cls._get_single_metric("f1_score", data),
+            jaccard=cls._get_single_metric("jaccard", data),
+            semantic_equivalence_rate=cls._get_single_metric("semantic_equivalence_rate", data),
+            intersection=cls._get_single_metric("intersection", data),
+            union=cls._get_single_metric("union", data),
+            lift=cls._get_single_metric("lift", data) if lift_mean_data is not None else None,
             lp_count=data.get("lp_count", 0)
+        )
+
+    @classmethod
+    def _get_single_metric(cls, key: str, data: dict) -> SingleMetric:
+        return SingleMetric(
+                identifier=key,
+                mean=data.get("mean", 0.0),
+                variance=data.get("variance", 0.0),
+                std_dev=data.get("std_dev", 0.0)
         )
 
     
     def to_dict(self) -> dict:
         return {
-            "mean_accuracy": self.mean_accuracy,
-            "mean_precision": self.mean_precision,
-            "mean_recall": self.mean_recall,
-            "mean_f1_score": self.mean_f1_score,
-            "mean_jaccard": self.mean_jaccard,
-            "semantic_equivalence_rate": self.semantic_equivalence_rate,
-            "mean_intersection": self.mean_intersection,
-            "mean_union": self.mean_union,
-            "mean_lift": self.mean_lift,
+            "accuracy": self.accuracy.to_dict(),
+            "precision": self.precision.to_dict(),
+            "recall": self.recall.to_dict(),
+            "f1_score": self.f1_score.to_dict(),
+            "jaccard": self.jaccard.to_dict(),
+            "semantic_equivalence_rate": self.semantic_equivalence_rate.to_dict(),
+            "intersection": self.intersection.to_dict(),
+            "union": self.union.to_dict(),
+            "lift": self.lift.to_dict() if self.lift is not None else None,
             "lp_count": self.lp_count
         }
 
@@ -108,16 +141,25 @@ class MetricsResult:
 
     def to_mean_metrics(self) -> MeanMetricsResult:
         return MeanMetricsResult(
-            mean_accuracy=self.accuracy,
-            mean_precision=self.precision,
-            mean_recall=self.recall,
-            mean_f1_score=self.f1_score,
-            mean_jaccard=self.jaccard,
-            semantic_equivalence_rate=1.0 if self.semantic_equivalence else 0.0,
-            mean_intersection=float(self.intersection),
-            mean_union=float(self.union),
-            mean_lift=float(self.lift) if self.lift is not None else 0.0,
+            accuracy=self._get_single_metric("accuracy"),
+            precision=self._get_single_metric("precision"),
+            recall=self._get_single_metric("recall"),
+            f1_score=self._get_single_metric("f1_score"),
+            jaccard=self._get_single_metric("jaccard"),
+            # Mapping the semantic equivalence metric to the semantic equivalence rate in the mean metrics result.
+            semantic_equivalence_rate=self._get_single_metric("semantic_equivalence"),
+            intersection=self._get_single_metric("intersection"),
+            union=self._get_single_metric("union"),
+            lift=self._get_single_metric("lift"),
             lp_count=1,
+        )
+
+    def _get_single_metric(self, key: str) -> SingleMetric:
+        return SingleMetric(
+            identifier=key,
+            mean=getattr(self, key) if hasattr(self, key) else 0.0,
+            variance=0.0,
+            std_dev=0.0
         )
 
 class TargetExtensionStructure:
@@ -491,7 +533,6 @@ class ComplexityStratum:
             mean_metric_aggregates=mean_metric_aggregates
         )
     
-
 class ComplexityResult:
     """
     Represents the result of a complexity analysis, which includes

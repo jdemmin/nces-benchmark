@@ -10,9 +10,9 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from src.benchmarking.metrics import (
+    calculate_extension_metrics,
     calculate_metrics,
     compute_lift,
-    mean_results,
 )
 from src.config import EmbeddingSettings, NCESSettings
 from src.data.lp import LearningProblem
@@ -270,7 +270,7 @@ def evaluate_nces(
     final_time = round(time.perf_counter() - eval_timer, 3)
     scored = [record for record in records if record.error is None]
     logger.info("Collecting mean metrics across %d successful problems", len(scored))
-    mean_metrics = mean_results([
+    mean_metrics = calculate_metrics([
         record.metrics for record in scored 
         if record is not None and record.metrics is not None and record.error is None
     ])
@@ -395,7 +395,7 @@ def _build_records(
             target = target or frozenset(problem.pos_example)
 
         runtime = round(time.perf_counter() - started, 3)
-        metrics = calculate_metrics(predicted, target, all_individuals)
+        metrics = calculate_extension_metrics(predicted, target, all_individuals)
         lift = compute_lift(complexity=problem.complexity, f1=metrics.f1)
         if lift is None:
             logger.warning(

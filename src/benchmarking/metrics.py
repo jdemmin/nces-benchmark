@@ -13,6 +13,7 @@ from src.data.results import (
     LearningProblemResult,
     MeanMetricsResult,
     MetricsResult,
+    SingleMetric,
 )
 
 
@@ -68,7 +69,7 @@ def compute_lift(f1: float, complexity: Complexity) -> float | None:
         return None
     return f1 - complexity.hardness.atomic_baseline_f1
 
-def calculate_metrics(
+def calculate_extension_metrics(
     predicted: Collection[str],
     target: Collection[str],
     all_individuals: Collection[str],
@@ -88,17 +89,21 @@ def calculate_metrics(
     false_negative = len(target_set - predicted_set)
     true_negative = len(universe) - true_positive - false_positive - false_negative
 
+    accuracy = _ratio(true_positive + true_negative, len(universe))
     precision = _ratio(true_positive, true_positive + false_positive)
     recall = _ratio(true_positive, true_positive + false_negative)
+    f1 = _ratio(2 * precision * recall, precision + recall)
     union = len(predicted_set | target_set)
+    jaccard = _ratio(true_positive, union)
+    semantic_equivalence = predicted_set == target_set
 
     return ExtensionMetrics(
-        accuracy=_ratio(true_positive + true_negative, len(universe)),
+        accuracy=accuracy,
         precision=precision,
         recall=recall,
-        f1=_ratio(2 * precision * recall, precision + recall),
-        jaccard=_ratio(true_positive, union),
-        semantic_equivalence=predicted_set == target_set,
+        f1=f1,
+        jaccard=jaccard,
+        semantic_equivalence=semantic_equivalence,
         intersection=true_positive,
         union=union,
     )
@@ -110,47 +115,79 @@ def _ratio(numerator: float, denominator: float) -> float:
 def mean_embeddings_results(reports: Sequence[EmbeddingResult]) -> MeanMetricsResult:
     """Compute the mean of the metrics across multiple embedding results."""
     metrics_list = [report.mean_metrics for report in reports if report.mean_metrics is not None]
-    return mean_results(metrics_list)
+    return calculate_metrics(metrics_list)
 
-def mean_results(records: list[MetricsResult] | list[MeanMetricsResult]) -> MeanMetricsResult:
-    """Compute the mean of the metrics across multiple metrics results."""
+def calculate_metrics(records: list[MetricsResult] | list[MeanMetricsResult]) -> MeanMetricsResult:
+    """Compute the mean of the metrics across multiple metrics results.
+    Now, also contains the variance and standard deviation of each metric.
+    
+    Metric Results are converted to Mean Results so that there are no
+    troubles computing the mean, variance, and standard deviation of
+    each metric including bools.
+    """
     
     tmp_records: list[MeanMetricsResult] = []
-    if all(isinstance(record, MetricsResult) for record in records):
-        for report in records:
-            if report is not None:
-                tmp_records.append(report.to_mean_metrics()) # type: ignore
-    else:
-        tmp_records = [report for report in records if report is not None] # type: ignore
-    none_reports = [report for report in tmp_records if report is None]
-    keys = {
-        "mean_accuracy": 0.0,
-        "mean_precision": 0.0,
-        "mean_recall": 0.0,
-        "mean_f1_score": 0.0,
-        "mean_jaccard": 0.0,
-        "mean_semantic_equivalence": 0.0,
-        "mean_intersection": 0.0,
-        "mean_union": 0.0,
-        "mean_lift": 0.0,
+    for record in records:
+        if record is not None:
+            if isinstance(record, MetricsResult):
+                tmp_records.append(record.to_mean_metrics()) # type: ignore
+            elif isinstance(record, MeanMetricsResult):
+                tmp_records.append(record) # type: ignore
+    metrics = (
+        "accuracy",
+        "precision",
+        "recall",
+        "f1_score",
+        "jaccard",
+        "semantic_equivalence_rate",
+        "intersection",
+        "union",
+        "lift",
+    )
+    counts = {key: 0 for key in metrics}
+    means = {key: 0.0 for key in metrics}
+    m2 = {key: 0.0 for key in metrics}
+    for result in tmp_records:
+        result_dict = result.to_dict()
+        for key in metrics:
+            value = result_dict.get(key)
+            if value is None or value["mean"] is None:
+                continue
+            # Increment number of observations
+            counts[key] += 1
+            # Difference between new value and old mean
+            delta = value["mean"] - means[key]
+            # Update mean
+            means[key] += delta / counts[key]
+            # Difference between new value and updated mean
+            delta2 = value["mean"] - means[key]
+            # Update sum of squared deviations
+            m2[key] += delta * delta2
+    variance = {
+        key: m2[key] / (counts[key] - 1)
+        if counts[key] > 1
+        else 0.0
+        for key in metrics
     }
-    for entry in tmp_records:
-        for key in keys:
-            if hasattr(entry, key) and getattr(entry, key) is not None:
-                keys[key] += getattr(entry, key)
-    for key in keys:
-        keys[key] /= (len(tmp_records) - len(none_reports)) if (len(tmp_records)) > 0 else 1
     return MeanMetricsResult(
-        mean_accuracy=keys["mean_accuracy"],
-        mean_precision=keys["mean_precision"],
-        mean_recall=keys["mean_recall"],
-        mean_f1_score=keys["mean_f1_score"],
-        mean_jaccard=keys["mean_jaccard"],
-        semantic_equivalence_rate=keys["mean_semantic_equivalence"],
-        mean_intersection=keys["mean_intersection"],
-        mean_union=keys["mean_union"],
-        mean_lift=keys["mean_lift"],
+        accuracy=_get_single_metric(key="accuracy", mean=means, variance=variance),
+        precision=_get_single_metric(key="precision", mean=means, variance=variance),
+        recall=_get_single_metric(key="recall", mean=means, variance=variance),
+        f1_score=_get_single_metric(key="f1_score", mean=means, variance=variance),
+        jaccard=_get_single_metric(key="jaccard", mean=means, variance=variance),
+        semantic_equivalence_rate=_get_single_metric(key="semantic_equivalence_rate", mean=means, variance=variance),
+        intersection=_get_single_metric(key="intersection", mean=means, variance=variance),
+        union=_get_single_metric(key="union", mean=means, variance=variance),
+        lift=_get_single_metric(key="lift", mean=means, variance=variance),
         lp_count=len(tmp_records)
+    )
+
+def _get_single_metric(key: str, mean: dict[str, float], variance: dict[str, float]) -> SingleMetric:
+    return SingleMetric(
+        identifier=key,
+        mean=mean[key],
+        variance=variance[key],
+        std_dev=variance[key] ** 0.5
     )
 
 def _mean(records: list[LearningProblemResult], key: str) -> float:
@@ -194,7 +231,7 @@ def get_complexity_summary(records: list[LearningProblemResult]) -> dict[str, di
     for axis_name in COMPLEXITY_AXES:
         group = _group_by_complexity(records, axis_name)
         for complexity_value, group_records in group.items():
-            mean_group_metrics = mean_results(
+            mean_group_metrics = calculate_metrics(
                 [r.metrics for r in group_records if r.metrics is not None]
             )
             summary.setdefault(axis_name, {}).setdefault(complexity_value, mean_group_metrics)
@@ -210,6 +247,12 @@ def _group_by_complexity(records: list[LearningProblemResult], axis_name: str) -
     axis_func = COMPLEXITY_AXES[axis_name]
     grouped: dict[Any, list[LearningProblemResult]] = {}
     for record in records:
-        key = axis_func(record.learning_problem.complexity)
-        grouped.setdefault(key, []).append(record)
+        if (
+            record.learning_problem.complexity is not None
+            and record.error is None
+        ):
+            key = axis_func(record.learning_problem.complexity)
+            grouped.setdefault(key, []).append(record)
+        if record.metrics is None:
+            grouped.setdefault(key, [])
     return grouped
