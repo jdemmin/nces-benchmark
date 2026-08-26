@@ -221,10 +221,48 @@ def fake_third_party(monkeypatch: pytest.MonkeyPatch):
 
     saved: dict[str, list[Any]] = {}
 
+
+    # random.seed(seed)
+    # np.random.seed(seed)
+    # torch.manual_seed(seed)
+    # torch.cuda.manual_seed_all(seed)
+    # torch.use_deterministic_algorithms(True, warn_only=True)
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = False
+
+    class FakeCudnn(types.ModuleType):
+        def __init__(self) -> None:
+            super().__init__("torch.backends.cudnn")
+            self.deterministic = True
+            self.benchmark = False
+
+    monkeypatch.setitem(sys.modules, "torch.backends.cudnn", FakeCudnn())
+    
+    class FakeBackends(types.ModuleType):
+        def __init__(self) -> None:
+            super().__init__("torch.backends")
+            self.deterministic = True
+            self.benchmark = False
+            self.cudnn = sys.modules["torch.backends.cudnn"]
+
+
+    monkeypatch.setitem(sys.modules, "torch.backends", FakeBackends())
+    
+    class FakeCuda(types.ModuleType):
+        def __init__(self) -> None:
+            super().__init__("torch.cuda")
+
+        def manual_seed_all(self, seed):  # noqa: ANN001
+            return None
+
+    monkeypatch.setitem(sys.modules, "torch.cuda", FakeCuda())
+
     class FakeTorch(types.ModuleType):
         def __init__(self) -> None:
             super().__init__("torch")
             self.saved = saved
+            self.cuda = sys.modules["torch.cuda"]
+            self.backends = sys.modules["torch.backends"]
 
         def use_deterministic_algorithms(self, a, warn_only: bool = False):
             return None
@@ -234,10 +272,10 @@ def fake_third_party(monkeypatch: pytest.MonkeyPatch):
             Path(path).write_text("weights", encoding="utf-8")
 
         def manual_seed(self, seed):  # noqa: ANN001
-            FakeTorch.manual_seed = seed
+            return None
 
     torch_module = FakeTorch()
-    #monkeypatch.setitem(sys.modules, "torch", torch_module)
+    monkeypatch.setitem(sys.modules, "torch", torch_module)
 
     class FakeNumpy(types.ModuleType):
         manual_seed = None
@@ -439,11 +477,14 @@ class TestBuildNCES:
 # --- train_nces -----------------------------------------
 
 
+
 class TestTrainNCES:
     def test_happy_path_reports_no_degradation(
-        self, tmp_path: Path, settings: NCESSettings,
+        self, tmp_path: Path, settings: NCESSettings, monkeypatch: pytest.MonkeyPatch
     ):
         from src.models.nces import train_nces
+
+        monkeypatch.setattr("src.random_utils.seed_everything", lambda *args, **kwargs: None)
         data = [
             ("A", {"positive examples": ["a"], "negative examples": ["b"]}),
             ("B", {"positive examples": ["c"], "negative examples": ["d"]}),
