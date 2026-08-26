@@ -9,3 +9,4 @@ dependencies:
   - libstdcxx-ng
   - pip:
       - -r requirements.txt
+      - -c constraints.txt

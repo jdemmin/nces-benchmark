@@ -1,0 +1,3 @@
+# This is not mentioned by SMAC's requirements, but
+# importing DTYPE fails with scikit-learn >= 1.9
+scikit-learn==1.8.0
