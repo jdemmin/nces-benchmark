@@ -323,6 +323,11 @@ equal to the DICE `embedding_dim` — it must match the exported CSV width.
 NCES receives no hyperparameter search: it is held fixed so that the
 embedding condition remains the only variable.
 
+> If a benchmark is started only with the `random` embedding condition, there is
+> no CSV that can be read from. Then `embedding_dim` falls back to NCES config's
+> `embedding_dim`. Furthermore, if a dice embedding fails to create a CSV the
+> same beahviour triggers. 
+
 ---
 
 ## CLI
@@ -344,6 +349,7 @@ python -m src [options]         # equivalent
 | `--nces-epochs N` | NCES training epochs. |
 | `--input-dir PATH` | Settings-file location. |
 | `--output-dir PATH` | Output-tree root. |
+| `--hpo-backend` | Choice of hyperparameter optimisation |
 | `--log-level {DEBUG,INFO,WARNING,ERROR}` | Verbosity. |
 
 Examples:
@@ -378,6 +384,9 @@ docker compose run --rm benchmark \
 
 Larger ontologies mainly cost time in the DICE hyperparameter search
 (four trials) and in reasoner extension computation during evaluation.
+
+> The repo comes with `four` ontologies equipped. `semantic_bible`,
+> `vicodi`, `carcinogenesis`, and `mutagenesis`.
 
 ---
 
@@ -440,4 +449,4 @@ Every run also writes `logs/<knowledge_base>.log` alongside its report.
   learner framework.
 - [dice-embeddings](https://github.com/dice-group/dice-embeddings) — the
   knowledge-graph embedding library.
-- [SMAC framework](https://github.com/automl/SMAC3)
+- [SMAC3](https://github.com/automl/SMAC3) — The framework for bayesian hpo optimization.
