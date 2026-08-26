@@ -2,12 +2,11 @@
 
 dicee==0.3.2
 httptools==0.8.0
-ontolearn==0.10.0
+ontolearn @ git+https://github.com/dice-group/Ontolearn.git@3e16476c9476cd28f91b02f45c54a0d8666982f2
 owlready2==0.51
 pip==26.2.1
 pyarrow==25.0.1
 pytest-cov==7.1.0
-scikit-learn==1.8.0
 smac==2.4.0
 torch==2.13.0+cpu
 uvloop==0.22.1
