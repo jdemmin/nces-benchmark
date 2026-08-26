@@ -816,11 +816,11 @@ class TestEvaluateNCES:
         assert report.split_name == "test"
         assert report.number_of_problems == 1
         assert report.number_of_successful_problems == 1
-        assert report.mean_metrics and report.mean_metrics.mean_f1_score == pytest.approx(1.0)
-        assert report.mean_metrics and report.mean_metrics.mean_semantic_equivalence == pytest.approx(1.0)
+        assert report.mean_metrics.f1_score.mean == pytest.approx(1.0)
+        assert report.mean_metrics.semantic_equivalence_rate.mean == pytest.approx(1.0)
 
         record = report.learning_problem_results[0]
-        assert record.hypotesis == "Guess"
+        assert record.hypothesis == "Guess"
         assert record.target_extension and record.target_extension.positive == 2
         assert record.target_extension and record.target_extension.negative == 2
         assert record.target_extension and record.target_extension.total == 4
@@ -862,8 +862,8 @@ class TestEvaluateNCES:
         )
 
         assert report.number_of_successful_problems == 1
-        assert report.mean_metrics and report.mean_metrics.mean_f1_score == pytest.approx(0.0)
-        assert report.mean_metrics and report.mean_metrics.mean_semantic_equivalence == pytest.approx(0.0)
+        assert report.mean_metrics.f1_score.mean == pytest.approx(0.0)
+        assert report.mean_metrics.semantic_equivalence_rate.mean == pytest.approx(0.0)
 
     def test_precomputed_target_extension_takes_precedence(
         self, tmp_path: Path, settings: NCESSettings, kb, patched_extension,
@@ -909,7 +909,7 @@ class TestEvaluateNCES:
             degraded=False,
         )
 
-        assert report.mean_metrics and report.mean_metrics.mean_f1_score == pytest.approx(1.0)
+        assert report.mean_metrics.f1_score.mean and report.mean_metrics.f1_score.mean == pytest.approx(1.0)
         assert "Target" not in queries, (
             "the precomputed extension must be reused, not recomputed"
         )
@@ -995,7 +995,7 @@ class TestEvaluateNCES:
         record = report.learning_problem_results
         assert record[0].target_extension
         assert record[0].target_extension.positive == 2
-        assert report.mean_metrics and report.mean_metrics.mean_f1_score == pytest.approx(1.0)
+        assert report.mean_metrics and report.mean_metrics.f1_score.mean == pytest.approx(1.0)
 
     def test_empty_hypothesis_is_scored_without_querying_the_reasoner(
         self, tmp_path: Path, settings: NCESSettings, kb, patched_extension,
@@ -1038,7 +1038,7 @@ class TestEvaluateNCES:
         record = report.learning_problem_results[0]
         # None is not an OWLClassExpression -> the TypeError guard fires.
         #assert record.get("error_type") == "TypeError"
-        assert "" == record.hypotesis
+        assert "" == record.hypothesis
         #assert queries == [], "no extension query for an absent hypothesis"
         assert report.number_of_successful_problems > 0
 
@@ -1088,12 +1088,12 @@ class TestEvaluateNCES:
         assert report.number_of_problems == 2
         assert report.number_of_successful_problems == 1
         # The mean is over scored records only, not over all records.
-        assert report.mean_metrics and report.mean_metrics.mean_f1_score == pytest.approx(1.0)
+        assert report.mean_metrics and report.mean_metrics.f1_score.mean == pytest.approx(1.0)
 
         failed = next(r for r in report.learning_problem_results if r.learning_problem.id == "lp_0001")
         assert failed.error and "RuntimeError" in failed.error
         assert "index out of range" in failed.error
-        assert failed.hypotesis == ""
+        assert failed.hypothesis == ""
         assert failed.learning_problem.complexity.dl_length == bad.complexity.dl_length
         # Failed records carry no metrics to be accidentally averaged.
         assert not failed.metrics
@@ -1248,7 +1248,7 @@ class TestEvaluateNCES:
             degraded=False,
         )
 
-        assert report.learning_problem_results[0].hypotesis == "Inner"
+        assert report.learning_problem_results[0].hypothesis == "Inner"
 
 
 
@@ -1377,7 +1377,7 @@ class TestPipelineIntegration:
 
         assert eval_report.number_of_successful_problems == 1
         assert eval_report.mean_metrics
-        assert eval_report.mean_metrics.mean_f1_score == pytest.approx(1.0)
+        assert eval_report.mean_metrics.f1_score.mean == pytest.approx(1.0)
 
     def test_evaluation_after_a_clean_train_still_requires_a_weights_file(
         self, tmp_path: Path, settings: NCESSettings, kb

@@ -4,12 +4,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.benchmarking.metrics import calculate_metrics
+from src.benchmarking.metrics import calculate_extension_metrics, calculate_metrics
 from src.models.nces import prepare_nces_training_data
 
 
 def test_perfect_hypothesis_is_semantically_equivalent() -> None:
-    metrics = calculate_metrics({"a", "b"}, {"a", "b"}, {"a", "b", "c", "d"})
+    metrics = calculate_extension_metrics({"a", "b"}, {"a", "b"}, {"a", "b", "c", "d"})
     assert metrics.f1 == 1.0
     assert metrics.accuracy == 1.0
     assert metrics.semantic_equivalence is True
@@ -17,18 +17,18 @@ def test_perfect_hypothesis_is_semantically_equivalent() -> None:
 
 
 def test_partial_overlap_scores() -> None:
-    metrics = calculate_metrics({"a", "c"}, {"a", "b"}, {"a", "b", "c", "d"})
+    metrics = calculate_extension_metrics({"a", "c"}, {"a", "b"}, {"a", "b", "c", "d"})
     assert metrics.precision == 0.5
     assert metrics.recall == 0.5
     assert metrics.f1 == 0.5
-    assert metrics.jaccard == pytest_approx(1 / 3)
+    assert metrics.jaccard == pytest_approx(1.0 / 3)
     assert metrics.semantic_equivalence is False
     # a=TP, c=FP, b=FN, d=TN -> 2/4
     assert metrics.accuracy == 0.5
 
 
 def test_empty_hypothesis_does_not_divide_by_zero() -> None:
-    metrics = calculate_metrics(set(), {"a"}, {"a", "b"})
+    metrics = calculate_extension_metrics(set(), {"a"}, {"a", "b"})
     assert metrics.precision == 0.0
     assert metrics.recall == 0.0
     assert metrics.f1 == 0.0
