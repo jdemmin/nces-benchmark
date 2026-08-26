@@ -19,10 +19,10 @@ import hashlib
 import json
 import logging
 import math
+import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-import random
 from typing import TYPE_CHECKING, Any
 
 from src.config import EmbeddingSettings
