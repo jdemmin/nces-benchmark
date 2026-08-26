@@ -26,7 +26,7 @@ ENV JAVA_HOME=/opt/conda/envs/nces-benchmark
 
 WORKDIR /app
 
-COPY environment.yml requirements.txt ./
+COPY environment.yml requirements.txt constraints.txt ./
 RUN conda env create -f environment.yml && conda clean -afy
 
 # Make the conda env the default interpreter for every later layer.
