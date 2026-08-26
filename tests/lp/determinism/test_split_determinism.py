@@ -5,7 +5,11 @@ from __future__ import annotations
 import random
 
 import pytest
-from lp.determinism.conftest import make_problem, make_problems
+from lp.determinism.conftest import (
+    make_hardness,
+    make_problem,
+    make_problems,
+)
 
 from src.data.lp import (
     _get_strata_key,
@@ -180,7 +184,6 @@ class TestCrossRunLeakage:
         """Same ids + different non-id content ⇒ same partition by id."""
         reference = split_learning_problems(population, seed=7)
         # Re-annotate every problem's complexity; ids are unchanged.
-        from conftest import make_hardness
 
         mutated = [
             p.annotate_hardness(p.complexity, make_hardness(extension_size=99))

@@ -6,9 +6,8 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast
 
 from src.benchmarking.metrics import (
     calculate_metrics,
