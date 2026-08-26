@@ -150,7 +150,7 @@ class MetricsResult:
             mean_recall=self.recall,
             mean_f1_score=self.f1_score,
             mean_jaccard=self.jaccard,
-            mean_semantic_equivalence=float(1 if self.semantic_equivalence else 0),
+            mean_semantic_equivalence=1.0 if self.semantic_equivalence else 0.0,
             mean_intersection=float(self.intersection),
             mean_union=float(self.union),
             mean_lift=float(self.lift) if self.lift is not None else 0.0

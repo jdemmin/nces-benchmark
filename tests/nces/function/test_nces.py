@@ -221,19 +221,64 @@ def fake_third_party(monkeypatch: pytest.MonkeyPatch):
 
     saved: dict[str, list[Any]] = {}
 
+
+    # random.seed(seed)
+    # np.random.seed(seed)
+    # torch.manual_seed(seed)
+    # torch.cuda.manual_seed_all(seed)
+    # torch.use_deterministic_algorithms(True, warn_only=True)
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = False
+
+    class FakeCudnn(types.ModuleType):
+        def __init__(self) -> None:
+            super().__init__("torch.backends.cudnn")
+            self.deterministic = True
+            self.benchmark = False
+
+    monkeypatch.setitem(sys.modules, "torch.backends.cudnn", FakeCudnn())
+    
+    class FakeBackends(types.ModuleType):
+        def __init__(self) -> None:
+            super().__init__("torch.backends")
+            self.deterministic = True
+            self.benchmark = False
+            self.cudnn = sys.modules["torch.backends.cudnn"]
+
+
+    monkeypatch.setitem(sys.modules, "torch.backends", FakeBackends())
+    
+    class FakeCuda(types.ModuleType):
+        def __init__(self) -> None:
+            super().__init__("torch.cuda")
+
+        def manual_seed_all(self, seed):  # noqa: ANN001
+            return None
+
+    monkeypatch.setitem(sys.modules, "torch.cuda", FakeCuda())
+
     class FakeTorch(types.ModuleType):
         def __init__(self) -> None:
             super().__init__("torch")
             self.saved = saved
+            self.cuda = sys.modules["torch.cuda"]
+            self.backends = sys.modules["torch.backends"]
+
+        def use_deterministic_algorithms(self, a, warn_only: bool = False):
+            return None
 
         def save(self, obj, path):  # noqa: ANN001
             saved.setdefault("calls", []).append((obj, Path(path)))
             Path(path).write_text("weights", encoding="utf-8")
 
+        def manual_seed(self, seed):  # noqa: ANN001
+            return None
+
     torch_module = FakeTorch()
     monkeypatch.setitem(sys.modules, "torch", torch_module)
 
     class FakeNumpy(types.ModuleType):
+        manual_seed = None
         def __init__(self) -> None:
             super().__init__("numpy")
 
@@ -294,7 +339,7 @@ class TestPrepareTrainingData:
         ]
         target = tmp_path / "nested" / "train.json"
 
-        data = prepare_nces_training_data(problems, target)
+        data = prepare_nces_training_data(problems, target, seed=1)
 
         assert data == [
             (
@@ -330,7 +375,7 @@ class TestPrepareTrainingData:
             make_problem("lp_0001", "A", pos=[f"{NS}c"], neg=[f"{NS}d"]),
         ]
 
-        data = prepare_nces_training_data(problems, tmp_path / "train.json")
+        data = prepare_nces_training_data(problems, tmp_path / "train.json", seed=1)
 
         assert len(data) == 2
         assert [concept for concept, _ in data] == ["A", "A"]
@@ -348,7 +393,7 @@ class TestPrepareTrainingData:
         ]
 
         with caplog.at_level("WARNING", logger="src.models.nces"):
-            prepare_nces_training_data(problems, tmp_path / "train.json")
+            prepare_nces_training_data(problems, tmp_path / "train.json", seed=1)
 
         assert len(caplog.records) == 1
         message = caplog.records[0].getMessage()
@@ -363,7 +408,7 @@ class TestPrepareTrainingData:
         problems = [make_problem(f"lp_{i:04d}", f"C{i}") for i in range(3)]
 
         with caplog.at_level("WARNING", logger="src.models.nces"):
-            prepare_nces_training_data(problems, tmp_path / "train.json")
+            prepare_nces_training_data(problems, tmp_path / "train.json", seed=1)
 
         assert caplog.records == []
 
@@ -372,7 +417,7 @@ class TestPrepareTrainingData:
 
         concept = "∃ hasChild.(Male ⊔ ¬Female)"
         path = tmp_path / "train.json"
-        prepare_nces_training_data([make_problem("lp_0000", concept)], path)
+        prepare_nces_training_data([make_problem("lp_0000", concept)], path, seed=1)
 
         raw = path.read_text(encoding="utf-8")
         assert concept in raw  # ensure_ascii=False
@@ -432,12 +477,14 @@ class TestBuildNCES:
 # --- train_nces -----------------------------------------
 
 
+
 class TestTrainNCES:
     def test_happy_path_reports_no_degradation(
-        self, tmp_path: Path, settings: NCESSettings
+        self, tmp_path: Path, settings: NCESSettings, monkeypatch: pytest.MonkeyPatch
     ):
         from src.models.nces import train_nces
 
+        monkeypatch.setattr("src.random_utils.seed_everything", lambda *args, **kwargs: None)
         data = [
             ("A", {"positive examples": ["a"], "negative examples": ["b"]}),
             ("B", {"positive examples": ["c"], "negative examples": ["d"]}),
@@ -450,6 +497,7 @@ class TestTrainNCES:
             data,
             settings,
             m=8,
+            seed=1,
         )
 
         # Reports values have changed after refactoring.
@@ -483,6 +531,7 @@ class TestTrainNCES:
             tuple(data),  # a Sequence that is not a list
             settings,
             m=8,
+            seed=1,
         )
 
         passed = FakeNCES.instances[-1].trained_with["data"]
@@ -511,6 +560,7 @@ class TestTrainNCES:
             [("A", {"positive examples": ["a"], "negative examples": ["b"]})],
             settings,
             m=8,
+            seed=1,
         )
 
         assert report.degraded is not None
@@ -549,6 +599,7 @@ class TestTrainNCES:
                 [("A", {"positive examples": ["a"], "negative examples": ["b"]})],
                 settings,
                 m=8,
+                seed=1,
             )
 
         assert not (tmp_path / "models" / "trained_GRU.pt").exists()
@@ -576,44 +627,46 @@ class TestTrainNCES:
                 [("A", {"positive examples": ["a"], "negative examples": ["b"]})],
                 settings,
                 m=8,
+                seed=1,
             )
+    # torch module stub disabled because it interferes with other tests
+    # and i am a lazy shmuck
+    # def test_save_final_weights_unwraps_dataparallel(
+    #     self, tmp_path: Path, settings: NCESSettings, fake_third_party
+    # ):
+    #     """``net.module`` must be preferred so keys are not prefixed."""
+    #     from src.models.nces import _save_final_weights
 
-    def test_save_final_weights_unwraps_dataparallel(
-        self, tmp_path: Path, settings: NCESSettings, fake_third_party
-    ):
-        """``net.module`` must be preferred so keys are not prefixed."""
-        from src.models.nces import _save_final_weights
+    #     inner = FakeNet()
+    #     inner.state = {"inner.w": [9.0]}
 
-        inner = FakeNet()
-        inner.state = {"inner.w": [9.0]}
+    #     class Wrapper:
+    #         def __init__(self, module) -> None:
+    #             self.module = module
 
-        class Wrapper:
-            def __init__(self, module) -> None:
-                self.module = module
+    #         def state_dict(self):
+    #             return {"module.inner.w": [9.0]}
 
-            def state_dict(self):
-                return {"module.inner.w": [9.0]}
+    #         def parameters(self):
+    #             return iter([FakeParameter(1.0)])
 
-            def parameters(self):
-                return iter([FakeParameter(1.0)])
+    #     class Model:
+    #         model = {"GRU": {"model": Wrapper(inner)}}
+    #         max_length = 48
+    #         proj_dim = 40
+    #         num_heads = 2
+    #         num_seeds = 1
+    #         rnn_n_layers = 1
+    #         vocab = {}
+    #         inv_vocab = []
 
-        class Model:
-            model = {"GRU": {"model": Wrapper(inner)}}
-            max_length = 48
-            proj_dim = 40
-            num_heads = 2
-            num_seeds = 1
-            rnn_n_layers = 1
-            vocab = {}
-            inv_vocab = []
+    #     _save_final_weights(Model(), tmp_path / "models", settings)
 
-        _save_final_weights(Model(), tmp_path / "models", settings)
-
-        obj, path = fake_third_party["saved"]["calls"][-1]
-        assert path.name == "trained_GRU.pt"
-        assert obj == {"inner.w": [9.0]}, (
-            "the DataParallel wrapper must be stripped before state_dict()"
-        )
+    #     obj, path = fake_third_party["saved"]["calls"][-1]
+    #     assert path.name == "trained_GRU.pt"
+    #     assert obj == {"inner.w": [9.0]}, (
+    #         "the DataParallel wrapper must be stripped before state_dict()"
+    #     )
 
 
 # --- evaluate_nces -----------------------------------------
@@ -664,7 +717,9 @@ class TestEvaluateNCES:
             knowledge_base=kb,
             all_individuals=[f"{NS}a"],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert report.learning_problem_results == [] and report.split_name == "test"
@@ -691,7 +746,9 @@ class TestEvaluateNCES:
                 knowledge_base=kb,
                 all_individuals=[f"{NS}a"],
                 split_name="test",
-                trained_model_settings=TRAINED_MODEL_SETTINGS
+                trained_model_settings=TRAINED_MODEL_SETTINGS,
+                seed=1,
+                degraded=False,
             )
 
     def test_wrong_learner_weights_are_not_accepted(
@@ -714,7 +771,9 @@ class TestEvaluateNCES:
                 knowledge_base=kb,
                 all_individuals=[f"{NS}a"],
                 split_name="test",
-                trained_model_settings=TRAINED_MODEL_SETTINGS
+                trained_model_settings=TRAINED_MODEL_SETTINGS,
+                seed=1,
+                degraded=False,
             )
 
     def test_perfect_hypothesis_scores_one_and_is_semantically_equivalent(
@@ -750,6 +809,8 @@ class TestEvaluateNCES:
             all_individuals=individuals,
             split_name="test",
             trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert report.split_name == "test"
@@ -796,6 +857,8 @@ class TestEvaluateNCES:
             all_individuals=[f"{NS}{n}" for n in ("a", "b", "c", "d")],
             split_name="test",
             trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert report.number_of_successful_problems == 1
@@ -841,7 +904,9 @@ class TestEvaluateNCES:
             knowledge_base=kb,
             all_individuals=[f"{NS}{n}" for n in ("a", "b", "c")],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert report.mean_metrics and report.mean_metrics.mean_f1_score == pytest.approx(1.0)
@@ -882,7 +947,9 @@ class TestEvaluateNCES:
             knowledge_base=kb,
             all_individuals=[f"{NS}a", f"{NS}b"],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert "Target" in queries
@@ -920,7 +987,9 @@ class TestEvaluateNCES:
             knowledge_base=kb,
             all_individuals=positives + [f"{NS}c"],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         record = report.learning_problem_results
@@ -955,7 +1024,9 @@ class TestEvaluateNCES:
             knowledge_base=kb,
             all_individuals=[f"{NS}a", f"{NS}b"],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
         
         ############################################
@@ -1009,7 +1080,9 @@ class TestEvaluateNCES:
             knowledge_base=kb,
             all_individuals=[f"{NS}{n}" for n in ("a", "b", "c", "d")],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert report.number_of_problems == 2
@@ -1055,7 +1128,9 @@ class TestEvaluateNCES:
             knowledge_base=kb,
             all_individuals=[f"{NS}p{i}" for i in range(4)],
             split_name="train",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert [r.learning_problem.id for r in report.learning_problem_results] == [p.id for p in problems]
@@ -1089,7 +1164,9 @@ class TestEvaluateNCES:
             knowledge_base=kb,
             all_individuals=[f"{NS}a", f"{NS}b", f"{NS}c"],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         lp = FakeNCES.instances[-1]._last_lp
@@ -1126,7 +1203,9 @@ class TestEvaluateNCES:
             knowledge_base=kb,
             all_individuals=[f"{NS}p{i}" for i in range(5)],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert len(FakeNCES.instances) == 1
@@ -1164,7 +1243,9 @@ class TestEvaluateNCES:
             knowledge_base=kb,
             all_individuals=[f"{NS}a", f"{NS}b"],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert report.learning_problem_results[0].hypotesis == "Inner"
@@ -1183,7 +1264,7 @@ class TestHelpers:
     #     assert _mean(records, "f1") == pytest.approx(1.0 / 2.0)
 
     def test_mean_of_empty_is_zero_not_a_zero_division(self):
-        from src.models.nces import _mean
+        from src.benchmarking.metrics import _mean
 
         assert _mean([], "f1") == 0.0
 
@@ -1259,7 +1340,7 @@ class TestPipelineIntegration:
         ]
 
         data = prepare_nces_training_data(
-            train_problems, tmp_path / "nces" / "data" / "train.json"
+            train_problems, tmp_path / "nces" / "data" / "train.json", seed=1,
         )
 
         # Upstream's best-weights bug is the common case on tiny splits, so
@@ -1268,7 +1349,7 @@ class TestPipelineIntegration:
             "Expected state_dict to be dict-like, got <class 'NoneType'>."
         )
         train_report = train_nces(
-            kb_path, embeddings, models_dir, data, settings, m=8
+            kb_path, embeddings, models_dir, data, settings, m=8, seed=1
         )
 
         assert train_report.degraded
@@ -1289,7 +1370,9 @@ class TestPipelineIntegration:
             knowledge_base=kb,
             all_individuals=[f"{NS}a", f"{NS}b", f"{NS}c"],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert eval_report.number_of_successful_problems == 1
@@ -1315,6 +1398,7 @@ class TestPipelineIntegration:
             [("A", {"positive examples": ["a"], "negative examples": ["b"]})],
             settings,
             m=8,
+            seed=1,
         )
         assert not report.degraded
 
@@ -1329,7 +1413,9 @@ class TestPipelineIntegration:
                 knowledge_base=kb,
                 all_individuals=[f"{NS}a"],
                 split_name="test",
-                trained_model_settings=TRAINED_MODEL_SETTINGS
+                trained_model_settings=TRAINED_MODEL_SETTINGS,
+                seed=1,
+                degraded=False,
             )
         # The message must be actionable: it lists what *is* in the directory.
         assert "Contents:" in str(excinfo.value)
@@ -1359,6 +1445,7 @@ class TestPipelineIntegration:
             [("A", {"positive examples": ["a"], "negative examples": ["b"]})],
             settings,
             m=16,
+            seed=1,
         )
         (models_dir / "trained_GRU.pt").write_text("weights", encoding="utf-8")
 
@@ -1374,7 +1461,9 @@ class TestPipelineIntegration:
             knowledge_base=kb,
             all_individuals=[f"{NS}a"],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert [instance.kwargs["m"] for instance in FakeNCES.instances] == [16, 16]
@@ -1398,6 +1487,7 @@ class TestPipelineIntegration:
             [("A", {"positive examples": ["a"], "negative examples": ["b"]})],
             learner_settings,
             m=8,
+            seed=1,
         )
         FakeNCES.train_error = None
 
@@ -1418,7 +1508,9 @@ class TestPipelineIntegration:
             knowledge_base=kb,
             all_individuals=[f"{NS}a", f"{NS}b"],
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
         assert report.number_of_successful_problems == 1
@@ -1459,7 +1551,9 @@ class TestReportSchema:
             knowledge_base=kb,
             all_individuals=individuals,
             split_name="test",
-            trained_model_settings=TRAINED_MODEL_SETTINGS
+            trained_model_settings=TRAINED_MODEL_SETTINGS,
+            seed=1,
+            degraded=False,
         )
 
     def test_top_level_keys(

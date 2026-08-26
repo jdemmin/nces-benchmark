@@ -2,5 +2,5 @@
   "seeds": [1],
   "benchmark_name": "smoke2",
   "embedding_conditions": ["dice", "random"],
-  "stratify_by": "depth"
+  "stratify_by": "dl_length"
 }

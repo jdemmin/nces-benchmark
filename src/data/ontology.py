@@ -7,6 +7,7 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from random import Random
 
 from ontolearn.knowledge_base import KnowledgeBase
 
@@ -56,7 +57,7 @@ def load_knowledge_base(kb_path: Path):
     return KnowledgeBase(path=str(kb_path))
 
 
-def parse_triples(kb_path: Path) -> list[Triple]:
+def parse_triples(kb_path: Path, seed: int) -> list[Triple]:
     """Parse an OWL/RDF-XML knowledge base into RDF triples.
 
     Only IRI-to-IRI statements are retained: literals cannot be embedded as
@@ -76,6 +77,7 @@ def parse_triples(kb_path: Path) -> list[Triple]:
         triples.append(Triple(str(subject), str(predicate), str(obj)))
 
     logger.info("Parsed %d RDF triples from %s", len(triples), kb_path.name)
+    triples.sort(key=lambda triple: (triple.subject, triple.predicate, triple.object))
     return triples
 
 
@@ -145,7 +147,7 @@ def compute_atomic_class_extensions(
         try:
             extension = frozenset(
                 individual.str
-                for individual in knowledge_base.individuals(owl_class)
+                for individual in sorted(knowledge_base.individuals(owl_class))
             )
         except Exception as error:  # noqa: BLE001 - upstream raises bare exceptions
             logger.warning(

@@ -49,7 +49,7 @@ def test_empty_hypothesis_does_not_divide_by_zero() -> None:
 
 def test_training_data_is_written_with_local_names(problems, tmp_path: Path) -> None:
     path = tmp_path / "nces_train_data.json"
-    data = prepare_nces_training_data(problems, path)
+    data = prepare_nces_training_data(problems, path, seed=1)
 
     assert len(data) == 2
     name, examples = data[0]

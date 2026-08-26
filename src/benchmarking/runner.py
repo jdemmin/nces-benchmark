@@ -16,7 +16,6 @@ from src.data.complexity import annotate_hardness
 from src.data.lp import (
     LearningProblem,
     generate_learning_problems,
-    save_learning_problems,
     save_split,
     split_learning_problems,
 )
@@ -51,8 +50,11 @@ from src.paths import (
     run_paths,
     update_false_dir_names,
 )
+from src.random_utils import seed_everything
 
 logger = logging.getLogger(__name__)
+
+
 
 
 def run_benchmark(
@@ -67,6 +69,7 @@ def run_benchmark(
     if (
         (config.project.embedding_conditions)[0] == "random"
         and not config.project.embedding_conditions[1:]
+        and len(config.project.embedding_conditions) > 1
         ):
         logger.warning(
             "Random embeddings must follow after other embedding conditions." \
@@ -74,10 +77,11 @@ def run_benchmark(
             "embedding dimensionality." \
         )
         raise ValueError("Random embeddings must follow after other embedding conditions.")
+
     selected_kbs = list(knowledge_bases or config.knowledge_bases)
     selected_seeds = list(seeds or config.project.seeds)
     base = output_dir or OUTPUT_DIR
-    logger.info(
+    logger.warning(
         "benchmark_name cannot contain train, valid or test in the name."
         "Replacing them with '_trian_', '_vaild_' and '_tset_' respectively."
     )
@@ -90,6 +94,8 @@ def run_benchmark(
     for kb_name in selected_kbs:
         for seed in selected_seeds:
             logger.info("=== %s | seed %d ===", kb_name, seed)
+            # set the random seed for reproducibility for every environment that uses
+            # randomness, including LPGen, Ontolearn, NumPy, and PyTorch
             try:
                 report = run_single(
                     kb_name,
@@ -152,6 +158,13 @@ def run_benchmark(
         "failures": failures,
     }
     _write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
+    logger.info("Proceeding to zip the benchmark results directory %s", benchmark_dir)
+    import shutil
+    shutil.make_archive(str(benchmark_dir), 'zip', str(benchmark_dir))
+    logger.info("Completed zipping the benchmark results directory %s", benchmark_dir)
+    # logger.info("Proceeding to remove the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
+    # shutil.rmtree(benchmark_dir)
+    # logger.info("Completed removal of the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
     return summary
 
 
@@ -164,6 +177,7 @@ def run_single(
 ) -> SingleRunResult:
     """Execute one benchmark run: one (knowledge base, seed) pair."""
 
+    seed_everything(seed)
     kb_path = resolve_knowledge_base(knowledge_base_name)
     paths = run_paths(
         benchmark_name,
@@ -175,7 +189,8 @@ def run_single(
     handler = configure_logging(paths.logs_dir / f"{knowledge_base_name}_{seed}.log")
     started = time.perf_counter()
     try:
-        ontology_parse_result = _stage_parse_ontology(kb_path)
+        # might be non deterministic
+        ontology_parse_result = _stage_parse_ontology(kb_path, seed=seed)
         knowledge_base = ontology_parse_result.knowledge_base
         logger.info("Completed Stage 1: Ontology parsing.")
         problems = generate_learning_problems(
@@ -191,13 +206,35 @@ def run_single(
         logger.info("Completed Stage 2: Learning-problem generation for %d problems.", len(problems))
         # Knowledge base only. No embedding-derived quantity may enter here, or
         # the benchmark's independent variable is contaminated.
-        logger.info("Annotating hardness for %d learning problems.", len(problems))
-        hardness_annotation_result = _stage_hardness_annotation(
-            problems, knowledge_base, ontology_parse_result.all_individuals
+        seed_everything(seed)
+        split = split_learning_problems(
+            problems,
+            seed=seed,
+            stratify_by=config.project.stratify_by,
         )
-        unparsed = hardness_annotation_result.unparsed_problems
-        problems = hardness_annotation_result.annotated_problems
-        target_extensions = hardness_annotation_result.target_extensions
+        #save_learning_problems(problems, paths.nces_data_dir / "learning_problems.json")
+        save_split(split, paths.nces_data_dir)
+        #logger.info("Saved learning problems to %s", paths.nces_data_dir / "learning_problems.json")
+        len_split_test = len(split["test"])
+        len_split_train = len(split["train"])
+        logger.info(
+            "Split %d learning problems into %d train / %d test",
+            len_split_train + len_split_test,
+            len_split_train,
+            len_split_test,
+        )
+        logger.info("Completed Stage 3: Learning-problem splitting.")
+        unparsed: list[str] = []
+        target_extensions: dict[str, frozenset[str]] = {}
+        for key, value in split.items():
+            logger.info(f"Annotating hardness for `{key}` split of size {len(value)}")
+            annotation_result = _stage_hardness_annotation(
+                value, knowledge_base, ontology_parse_result.all_individuals
+            )
+            split[key] = annotation_result.annotated_problems
+            unparsed.extend(annotation_result.unparsed_problems)
+            target_extensions.update(annotation_result.target_extensions)
+        logger.info("Completed Stage 4: Hardness annotation for %d learning problems", len_split_train + len_split_test)
         if unparsed:
             logger.warning(
                 "%d of %d target concepts could not be parsed; used sampled "
@@ -207,23 +244,6 @@ def run_single(
                 ", ".join(unparsed[:5]),
                 ", ..." if len(unparsed) > 5 else "",
             )
-        _log_complexity_distribution(problems)
-        logger.info("Completed Stage 3: Hardness annotation for %d learning problems", len(problems))
-        save_learning_problems(problems, paths.nces_data_dir / "learning_problems.json")
-        logger.info("Saved learning problems to %s", paths.nces_data_dir / "learning_problems.json")
-        split = split_learning_problems(
-            problems,
-            seed=seed,
-            stratify_by=config.project.stratify_by,
-        )
-        save_split(split, paths.nces_data_dir)
-        logger.info(
-            "Split %d learning problems into %d train / %d test",
-            len(problems),
-            len(split["train"]),
-            len(split["test"]),
-        )
-        logger.info("Completed Stage 4: Learning-problem splitting.")
         embedding_report, m = _embedding_stage(
             paths=paths,
             kb_path=kb_path,
@@ -243,7 +263,8 @@ def run_single(
             target_extensions=target_extensions,
             embedding_report=embedding_report,
             config=config,
-            m=m
+            m=m,
+            seed=seed
         )
         logger.info(
             "Completed Stage 6: NCES training and evaluation for all conditions."
@@ -332,39 +353,39 @@ def _convert_complexity_summary_to_dict(
     }
 
 
-def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
-    """Log the spread along each complexity axis.
+# def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
+#     """Log the spread along each complexity axis.
 
-    Thin strata make stratified splitting degenerate -- a stratum of one or
-    two problems is handed entirely to train -- so this is the signal for
-    whether the configured ``stratify_by`` axis is viable.
-    """
+#     Thin strata make stratified splitting degenerate -- a stratum of one or
+#     two problems is handed entirely to train -- so this is the signal for
+#     whether the configured ``stratify_by`` axis is viable.
+#     """
 
-    axes: dict[str, dict[str, int]] = {
-        "dl_length": {},
-        "depth": {},
-        "expressivity": {},
-        "redundant": {},
-    }
-    for problem in problems:
-        for axis, counts in axes.items():
-            try:
-                key = str(getattr(problem.complexity, axis))
-            except AttributeError:
-                key = str(getattr(problem.complexity.hardness, axis))
-            counts[key] = counts.get(key, 0) + 1
+#     axes: dict[str, dict[str, int]] = {
+#         "dl_length": {},
+#         "depth": {},
+#         "expressivity": {},
+#         "redundant": {},
+#     }
+#     for problem in problems:
+#         for axis, counts in axes.items():
+#             try:
+#                 key = str(getattr(problem.complexity, axis))
+#             except AttributeError:
+#                 key = str(getattr(problem.complexity.hardness, axis))
+#             counts[key] = counts.get(key, 0) + 1
 
-    for axis, counts in axes.items():
-        rendered = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
-        logger.info("Complexity distribution by %s: %s", axis, rendered)
-        thin = [k for k, v in counts.items() if v < 3]
-        if thin and axis != "redundant":
-            logger.warning(
-                "Axis %r has strata with fewer than 3 learning problems (%s); "
-                "stratifying on it will starve the test split",
-                axis,
-                ", ".join(sorted(thin)),
-            )
+#     for axis, counts in axes.items():
+#         rendered = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+#         logger.info("Complexity distribution by %s: %s", axis, rendered)
+#         thin = [k for k, v in counts.items() if v < 3]
+#         if thin and axis != "redundant":
+#             logger.warning(
+#                 "Axis %r has strata with fewer than 3 learning problems (%s); "
+#                 "stratifying on it will starve the test split",
+#                 axis,
+#                 ", ".join(sorted(thin)),
+#             )
 
 
 def _order_embedding_conditions(embedding_conditions: list[str]) -> None:
@@ -392,8 +413,6 @@ def _embedding_stage(
     ) -> tuple[dict[str, EmbeddingResultDice], int]:
     """
     Run the embedding stage and return the report.
-    Creates a temporary data directory to avoid triggering dicee path checks.
-    Copies the embeddings to the run's embeddings directory so nothing is lost.
     """
 
     report, m = build_embeddings(
@@ -403,7 +422,7 @@ def _embedding_stage(
             embedding_settings=benchmark_settings.embedding,
             seed=seed,
             embedding_conditions=benchmark_settings.project.embedding_conditions,
-            expected_dim=benchmark_settings.nces.embedding_dim
+            expected_dim=benchmark_settings.nces.embedding_dim,
         )
     return report, m
 
@@ -415,10 +434,10 @@ def _write_json(payload: dict[str, Any], path: Path) -> None:
     logger.info("Wrote %s", path)
 
 
-def _stage_parse_ontology(kb_path: Path) -> OntologyParseResult:
+def _stage_parse_ontology(kb_path: Path, seed: int) -> OntologyParseResult:
     """Parse the ontology and return triples and individual IRIs."""
 
-    triples = parse_triples(kb_path)
+    triples = parse_triples(kb_path, seed=seed)
     knowledge_base = load_knowledge_base(kb_path)
     all_individuals = individual_iris(knowledge_base)
     return OntologyParseResult(
@@ -480,15 +499,15 @@ def _stage_train_eval_nces(
         target_extensions: dict[str, frozenset[str]], 
         embedding_report: dict[str, EmbeddingResultDice], 
         m: int,
-        config: BenchmarkConfiguration
+        config: BenchmarkConfiguration, seed: int
     ) -> SingleRunResult:
     """
     Train and evaluate NCES for each embedding condition.
     Writes NCES stats.
     """
-    
+    seed_everything(seed)
     train_data = prepare_nces_training_data(
-        split["train"], paths.nces_data_dir / "nces_train_data.json"
+        split["train"], paths.nces_data_dir / "nces_train_data.json", seed=seed
     )
     logger.info("Prepared NCES training data")
     conditions: dict[str, EmbeddingResult] = {}
@@ -512,6 +531,7 @@ def _stage_train_eval_nces(
             train_data=train_data,
             settings=config.nces,
             m=m,
+            seed=seed,
         )
         _write_json(
             payload=training.to_dict(),
@@ -539,6 +559,8 @@ def _stage_train_eval_nces(
             split_name="test",
             m=m,
             trained_model_settings=embedding_report[condition].embedding_settings,
+            seed=seed,
+            degraded=training.degraded,
         )
         logger.info(
             "Completed NCES evaluation for condition '%s'.",

@@ -4,6 +4,10 @@
 rm_out.sh
 Miniconda3-latest-Linux-x86_64.sh
 
+# too large test data
+/tests/lp/determinism/semantic_bible.owl
+/tests/lp/determinism/test_lp_generation.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

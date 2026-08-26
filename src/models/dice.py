@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -16,6 +15,7 @@ import numpy as np
 from src.config import SPLIT_RATIOS, EmbeddingSettings
 from src.data.ontology import Triple, local_name, parse_triples
 from src.models.hpo_search_utils import selection_score
+from src.random_utils import seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def write_dicee_dataset(
 
     directory.mkdir(parents=True, exist_ok=True)
     shuffled = [triple.as_tuple() for triple in triples]
-    random.Random(seed).shuffle(shuffled)
+    # random.Random(seed).shuffle(shuffled)
 
     total = len(shuffled)
     n_train = max(1, int(total * ratios[0]))
@@ -335,7 +335,8 @@ def build_embeddings(
     trial's entity embeddings. The ``random`` condition reuses the entity
     vocabulary and the selected dimensionality but never trains.
     """
-    triples = parse_triples(kb_path)
+    
+    triples = parse_triples(kb_path, seed=seed)
     counts = write_dicee_dataset(triples, data_dir, seed=seed)
 
     entity_names = sorted(
@@ -345,6 +346,7 @@ def build_embeddings(
     chosen = embedding_settings
 
     if "dice" in embedding_conditions:
+        seed_everything(seed)
         best, report, trials, validation_error, run_dir = search_best_embedding_setting(
             data_dir, embeddings_dir, embedding_settings, seed=seed
         )
@@ -382,22 +384,23 @@ def build_embeddings(
             score,
             validation_error,
         )
+    # Match the exported DICE width, not the configured dimension: some
+    # models store several components per dimension.
+    baseline_dim: int
+    try:
+        baseline_dim = get_csv_dimension(embeddings_dir / f"{chosen.model_name}.csv")
+    except FileNotFoundError as e:
+        logger.error(
+            "Failed to get CSV dimension for DICE embeddings: %s. "
+            "Falling back to the configured embedding dimension %d.",
+            e,
+            chosen.embedding_dim,
+        )
+        baseline_dim = expected_dim
 
     if "random" in embedding_conditions:
+        seed_everything(seed)
         output_path = embeddings_dir / f"{chosen.model_name}_random.csv"
-        # Match the exported DICE width, not the configured dimension: some
-        # models store several components per dimension.
-        baseline_dim: int
-        try:
-            baseline_dim = get_csv_dimension(embeddings_dir / f"{chosen.model_name}.csv")
-        except FileNotFoundError as e:
-            logger.error(
-                "Failed to get CSV dimension for DICE embeddings: %s. "
-                "Falling back to the configured embedding dimension %d.",
-                e,
-                chosen.embedding_dim,
-            )
-            baseline_dim = expected_dim
         generate_random_embeddings(
             entity_names,
             output_path,

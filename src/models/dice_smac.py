@@ -19,13 +19,14 @@ import hashlib
 import json
 import logging
 import math
+import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from random import Random
 from typing import TYPE_CHECKING, Any
 
 from src.config import EmbeddingSettings
+from src.random_utils import seed_everything
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ConfigSpace import Configuration, ConfigurationSpace
@@ -476,7 +477,8 @@ def _run_dir_for(embeddings_dir: Path, settings: EmbeddingSettings,
 def _config_key(config: Configuration, seed: int) -> tuple[tuple[str, Any], ...]:
     items = list(dict(config).items())
     items = sorted(items)
-    Random(seed).shuffle(items)
+    seed_everything(seed)
+    random.Random(seed).shuffle(items)
     return tuple(items)
 
 def _diagnose_total_failure(trials: list[dict[str, Any]]) -> str:
