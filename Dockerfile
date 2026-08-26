@@ -6,10 +6,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     OMP_NUM_THREADS=1 \
     TOKENIZERS_PARALLELISM=false \
-    CONDA_ENV=nces-benchmark
+    CONDA_ENV=nces-benchmark \
+    PYTHONHASHSEED=0
 
 # Set (force) the library path to include the conda environment's lib directory, which is necessary for some libraries to function correctly.
-ENV LD_LIBRARY_PATH=/opt/conda/envs/nces-benchmark/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/opt/conda/envs/nces-benchmark/lib
 
 # Java is required by owlapy's OWLAPI synchronisation layer (HermiT/Pellet).
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -21,8 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-ENV PYTHONHASHSEED=0
+ENV JAVA_HOME=/opt/conda/envs/nces-benchmark
 
 WORKDIR /app
 
