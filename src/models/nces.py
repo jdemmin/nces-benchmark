@@ -420,7 +420,7 @@ def _build_records(
 
         learning_problem_result = LearningProblemResult(
             learning_problem=problem,
-            hypotesis=hypothesis_dl,
+            hypothesis=hypothesis_dl,
             target_extension=TargetExtensionStructure(
                 positive=len(target),
                 negative=len(negative_extension),

@@ -146,10 +146,11 @@ def mean_results(records: list[MetricsResult] | list[MeanMetricsResult]) -> Mean
         mean_recall=keys["mean_recall"],
         mean_f1_score=keys["mean_f1_score"],
         mean_jaccard=keys["mean_jaccard"],
-        mean_semantic_equivalence=keys["mean_semantic_equivalence"],
+        semantic_equivalence_rate=keys["mean_semantic_equivalence"],
         mean_intersection=keys["mean_intersection"],
         mean_union=keys["mean_union"],
-        mean_lift=keys["mean_lift"]
+        mean_lift=keys["mean_lift"],
+        lp_count=len(tmp_records)
     )
 
 def _mean(records: list[LearningProblemResult], key: str) -> float:
