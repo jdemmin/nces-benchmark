@@ -9,6 +9,7 @@ from typing import Any
 
 from src.data.complexity import Complexity
 from src.data.results import (
+    ComplexityStratum,
     EmbeddingResult,
     LearningProblemResult,
     MeanMetricsResult,
@@ -89,12 +90,12 @@ def calculate_extension_metrics(
     false_negative = len(target_set - predicted_set)
     true_negative = len(universe) - true_positive - false_positive - false_negative
 
-    accuracy = _ratio(true_positive + true_negative, len(universe))
-    precision = _ratio(true_positive, true_positive + false_positive)
-    recall = _ratio(true_positive, true_positive + false_negative)
-    f1 = _ratio(2 * precision * recall, precision + recall)
+    accuracy = round(_ratio(true_positive + true_negative, len(universe)), 4)
+    precision = round(_ratio(true_positive, true_positive + false_positive), 4)
+    recall = round(_ratio(true_positive, true_positive + false_negative), 4)
+    f1 = round(_ratio(2 * precision * recall, precision + recall), 4)
     union = len(predicted_set | target_set)
-    jaccard = _ratio(true_positive, union)
+    jaccard = round(_ratio(true_positive, union), 4)
     semantic_equivalence = predicted_set == target_set
 
     return ExtensionMetrics(
@@ -163,6 +164,8 @@ def calculate_metrics(records: list[MetricsResult] | list[MeanMetricsResult]) ->
             delta2 = value["mean"] - means[key]
             # Update sum of squared deviations
             m2[key] += delta * delta2
+
+    # Pass counts to _get_single_metric
     variance = {
         key: m2[key] / (counts[key] - 1)
         if counts[key] > 1
@@ -170,24 +173,25 @@ def calculate_metrics(records: list[MetricsResult] | list[MeanMetricsResult]) ->
         for key in metrics
     }
     return MeanMetricsResult(
-        accuracy=_get_single_metric(key="accuracy", mean=means, variance=variance),
-        precision=_get_single_metric(key="precision", mean=means, variance=variance),
-        recall=_get_single_metric(key="recall", mean=means, variance=variance),
-        f1_score=_get_single_metric(key="f1_score", mean=means, variance=variance),
-        jaccard=_get_single_metric(key="jaccard", mean=means, variance=variance),
-        semantic_equivalence_rate=_get_single_metric(key="semantic_equivalence_rate", mean=means, variance=variance),
-        intersection=_get_single_metric(key="intersection", mean=means, variance=variance),
-        union=_get_single_metric(key="union", mean=means, variance=variance),
-        lift=_get_single_metric(key="lift", mean=means, variance=variance),
+        accuracy=_get_single_metric(key="accuracy", mean=means, variance=variance, counts=counts),
+        precision=_get_single_metric(key="precision", mean=means, variance=variance, counts=counts),
+        recall=_get_single_metric(key="recall", mean=means, variance=variance, counts=counts),
+        f1_score=_get_single_metric(key="f1_score", mean=means, variance=variance, counts=counts),
+        jaccard=_get_single_metric(key="jaccard", mean=means, variance=variance, counts=counts),
+        semantic_equivalence_rate=_get_single_metric(key="semantic_equivalence_rate", mean=means, variance=variance, counts=counts),
+        intersection=_get_single_metric(key="intersection", mean=means, variance=variance, counts=counts),
+        union=_get_single_metric(key="union", mean=means, variance=variance, counts=counts),
+        lift=_get_single_metric(key="lift", mean=means, variance=variance, counts=counts),
         lp_count=len(tmp_records)
     )
 
-def _get_single_metric(key: str, mean: dict[str, float], variance: dict[str, float]) -> SingleMetric:
+def _get_single_metric(key: str, mean: dict[str, float], variance: dict[str, float], counts: dict[str, int]) -> SingleMetric:
     return SingleMetric(
         identifier=key,
-        mean=mean[key],
-        variance=variance[key],
-        std_dev=variance[key] ** 0.5
+        mean=round(mean[key], 4),
+        variance=round(variance[key], 4),
+        std_dev=round(variance[key] ** 0.5, 4),
+        # n=counts[key],
     )
 
 def _mean(records: list[LearningProblemResult], key: str) -> float:
@@ -236,6 +240,24 @@ def get_complexity_summary(records: list[LearningProblemResult]) -> dict[str, di
             )
             summary.setdefault(axis_name, {}).setdefault(complexity_value, mean_group_metrics)
     return summary
+
+def build_complexity_stratum(stratum_name: str, group: dict[str, MeanMetricsResult]) -> ComplexityStratum:
+    return ComplexityStratum(
+        stratum_name=stratum_name,
+        # The maximum number of learning problems in any bucket for this stratum.
+        # Can we arbitrarily choose the maximum as the bucket size?
+        bucket_size=max((m.lp_count for m in group.values()), default=0),
+        aggragate_per_bucket_value=group if group else None
+    )
+
+
+def build_complexity_strata(group: dict[str, dict[str, MeanMetricsResult]]) -> list[ComplexityStratum]:
+    strata: list[ComplexityStratum] = []
+    for stratum_name, stratum_group in group.items():
+        stratum = build_complexity_stratum(stratum_name, stratum_group)
+        if stratum is not None:
+            strata.append(stratum)
+    return strata
 
 
 def _group_by_complexity(records: list[LearningProblemResult], axis_name: str) -> dict[Any, list[LearningProblemResult]]:
