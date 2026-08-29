@@ -281,7 +281,8 @@ def run_single(
                     ", ".join(unparsed[:5]),
                     ", ..." if len(unparsed) > 5 else "",
                 )
-            _save_benchmark_learning_problems(problems, paths.learning_problems_path)
+            problems = split["train"] + split["test"]
+            _save_benchmark_learning_problems(sorted(problems, key=lambda p: p.id), paths.learning_problems_path)
         else:
             logger.info(
                 "Data generation settings have not changed." \
@@ -386,15 +387,17 @@ def _load_benchmark_learning_problems(path: Path) -> list[LearningProblem]:
 
 def _load_split(path: Path) -> dict[str, list[LearningProblem]]:
     """Load the data split from the specified directory."""
-    split_file_path = path / "train.json"
+    split_file_path = path / "train_problems.json"
     split = {"train": [], "test": []}
     if split_file_path.exists():
         with open(split_file_path, "r") as f:
-            split = json.load(f)
-    split_file_path = path / "test.json"
+            split["train"].extend(LearningProblem.from_dict(d) for d in json.load(f))
+            split["train"] = sorted(split["train"], key=lambda p: p.id)
+    split_file_path = path / "test_problems.json"
     if split_file_path.exists():
         with open(split_file_path, "r") as f:
-            split["test"] = json.load(f)
+            split["test"].extend(LearningProblem.from_dict(d) for d in json.load(f))
+            split["test"] = sorted(split["test"], key=lambda p: p.id)
     return split
 
 
