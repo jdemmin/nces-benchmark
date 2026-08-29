@@ -52,13 +52,13 @@ def test_expand_is_a_no_op_on_empty_input() -> None:
 
 def test_normalise_sorts_examples() -> None:
     raw = payload(male=(["stefan", "anna", "markus"], ["michelle"]))
-    (problem,) = _normalise(raw, namespace=NS, seed=1)
+    (problem,) = _normalise(raw, namespace=NS)
     assert problem.pos_example == sorted(problem.pos_example)
     assert problem.pos_example[0].endswith("#anna")
 
 
 def test_normalise_expands_to_full_iris() -> None:
-    (problem,) = _normalise(payload(male=(["stefan"], ["anna"])), namespace=NS, seed=1)
+    (problem,) = _normalise(payload(male=(["stefan"], ["anna"])), namespace=NS)
     assert problem.pos_example == [f"{NS}stefan"]
 
 
@@ -68,7 +68,7 @@ def test_normalise_drops_degenerate_problems() -> None:
         no_negatives=(["stefan"], []),
         no_positives=([], ["anna"]),
     )
-    problems = _normalise(raw, namespace=NS, seed=1)
+    problems = _normalise(raw, namespace=NS)
     assert [p.target_concept for p in problems] == ["good"]
 
 # Kept for reference, but commented out because the current implementation of _normalise
@@ -90,22 +90,22 @@ def test_normalise_drops_degenerate_problems() -> None:
 
 def test_normalise_accepts_a_list_of_pairs() -> None:
     raw = [("male", {"positive examples": ["stefan"], "negative examples": ["anna"]})]
-    (problem,) = _normalise(raw, namespace=NS, seed=1)
+    (problem,) = _normalise(raw, namespace=NS)
     assert problem.target_concept == "male"
 
 
 def test_normalise_tolerates_missing_example_keys() -> None:
-    assert _normalise({"male": {}}, namespace=NS, seed=1) == []
+    assert _normalise({"male": {}}, namespace=NS) == []
 
 
 def test_normalise_computes_structural_complexity() -> None:
     raw = payload(**{"male ⊓ ∃ hasChild.person": (["stefan"], ["anna"])})
-    (problem,) = _normalise(raw, namespace=NS, seed=1)
+    (problem,) = _normalise(raw, namespace=NS)
     assert problem.complexity.dl_length > 1
     assert problem.complexity.depth == 1
 
 
 def test_normalise_leaves_hardness_unpopulated() -> None:
     """Hardness is the annotation stage's job, not generation's."""
-    (problem,) = _normalise(payload(male=(["stefan"], ["anna"])), namespace=NS, seed=1)
+    (problem,) = _normalise(payload(male=(["stefan"], ["anna"])), namespace=NS)
     assert problem.complexity.hardness.atomic_baseline_f1 is None

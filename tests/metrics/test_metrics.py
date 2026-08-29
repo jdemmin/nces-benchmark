@@ -167,11 +167,11 @@ class TestCalculateExtensionMetrics:
         # TP=2, FP=1, FN=2, TN=10-2-1-2=5
         assert m.intersection == 2
         assert m.union == 5
-        assert m.precision == pytest.approx(2 / 3)
-        assert m.recall == pytest.approx(0.5)
-        assert m.f1 == pytest.approx(2 * (2 / 3) * 0.5 / ((2 / 3) + 0.5))
-        assert m.jaccard == pytest.approx(2 / 5)
-        assert m.accuracy == pytest.approx(7 / 10)
+        assert m.precision == pytest.approx(round(2 / 3, 4))
+        assert m.recall == pytest.approx(round(0.5, 4))
+        assert m.f1 == pytest.approx(round(2 * (2 / 3) * 0.5 / ((2 / 3) + 0.5), 4))
+        assert m.jaccard == pytest.approx(round(2 / 5, 4))
+        assert m.accuracy == pytest.approx(round(7 / 10, 4))
         assert m.semantic_equivalence is False
 
     def test_individuals_outside_all_individuals_extend_the_universe(self):
@@ -185,7 +185,7 @@ class TestCalculateExtensionMetrics:
         )
 
         # universe = {a, b, ghost} -> TP=1, FP=1, FN=1, TN=0
-        assert m.accuracy == pytest.approx(1 / 3)
+        assert m.accuracy == pytest.approx(round(1 / 3, 4))
         assert m.union == 3
 
     def test_empty_prediction_yields_zeroes_not_division_error(self, universe):
@@ -195,7 +195,7 @@ class TestCalculateExtensionMetrics:
         assert m.recall == 0.0
         assert m.f1 == 0.0
         assert m.jaccard == 0.0
-        assert m.accuracy == pytest.approx(0.7)  # 7 true negatives
+        assert m.accuracy == pytest.approx(round(0.7, 4))  # 7 true negatives
         assert m.semantic_equivalence is False
 
     def test_both_empty_is_equivalent_but_scores_zero_on_f1(self, universe):
@@ -289,12 +289,12 @@ class TestCalculateMetrics:
 
         result = calculate_metrics(records)
 
-        mean = sum(values) / len(values)
+        mean = round(sum(values) / len(values), 4)
         var = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
 
         assert result.f1_score.mean == pytest.approx(mean)
         assert result.f1_score.variance == pytest.approx(var)
-        assert result.f1_score.std_dev == pytest.approx(math.sqrt(var))
+        assert result.f1_score.std_dev == pytest.approx(round(math.sqrt(var), 4))
         assert result.lp_count == 3
 
     def test_variance_is_sample_not_population(self):
@@ -338,8 +338,8 @@ class TestCalculateMetrics:
         values = [base + 1, base + 2, base + 3, base + 4]
         result = calculate_metrics([make_metrics(union=v) for v in values])
 
-        assert result.union.mean == pytest.approx(base + 2.5)
-        assert result.union.variance == pytest.approx(5 / 3, rel=1e-6)
+        assert result.union.mean == pytest.approx(round(base + 2.5, 4))
+        assert result.union.variance == pytest.approx(round(5 / 3, 4), rel=1e-6)
 
     def test_accepts_mean_metrics_input_for_two_stage_aggregation(self):
         stage_one = [

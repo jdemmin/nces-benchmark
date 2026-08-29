@@ -46,7 +46,9 @@ def test_run_paths_match_specified_layout(tmp_path: Path) -> None:
     assert paths.embeddings_dir == root / "embeddings"
     assert paths.embeddings_data_dir == root / "embeddings" / "data"
     assert paths.nces_dir == root / "nces"
-    assert paths.nces_data_dir == root / "nces" / "data"
+    # dir has moved to parent parent. Kept as reference
+    # assert paths.nces_data_dir == root / "nces" / "data"
+    assert paths.nces_data_dir == root.parent.parent / "data"
     assert paths.logs_dir == root / "logs"
     assert paths.entity_embeddings_path("Keci", random=False).name == "Keci.csv"
     assert paths.entity_embeddings_path("Keci", random=True).name == "Keci_random.csv"
