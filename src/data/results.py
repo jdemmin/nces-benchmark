@@ -11,72 +11,94 @@ from src.data.lp import LearningProblem, LearningProblemTruncated
 from src.data.ontology import Triple
 
 
+@dataclass(frozen=True)
+class SingleMetric:
+    identifier: str
+    mean: float
+    variance: float
+    std_dev: float
+    # n: int
+
+    def to_dict(self) -> dict:
+        return {
+            "identifier": self.identifier,
+            "mean": self.mean,
+            "variance": self.variance,
+            "std_dev": self.std_dev,
+            # "n": self.n
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SingleMetric":
+        return cls(
+            identifier=data.get("identifier", ""),
+            mean=data.get("mean", 0.0),
+            variance=data.get("variance", 0.0),
+            std_dev=data.get("std_dev", 0.0),
+            # n=data.get("n", 0)
+        )
+
+@dataclass(frozen=True)
 class MeanMetricsResult:
     """
     Represents the mean evaluation metrics 
     across multiple learning problem results.
     """
-    mean_accuracy: float
-    mean_precision: float
-    mean_recall: float
-    mean_f1_score: float
-    mean_jaccard: float
-    mean_semantic_equivalence: float
-    mean_intersection: float
-    mean_union: float
-    mean_lift: float
-
-    def __init__(
-        self,
-        mean_accuracy: float,
-        mean_precision: float,
-        mean_recall: float,
-        mean_f1_score: float,
-        mean_jaccard: float,
-        mean_semantic_equivalence: float,
-        mean_intersection: float,
-        mean_union: float,
-        mean_lift: float
-    ):
-        self.mean_accuracy = mean_accuracy
-        self.mean_precision = mean_precision
-        self.mean_recall = mean_recall
-        self.mean_f1_score = mean_f1_score
-        self.mean_jaccard = mean_jaccard
-        self.mean_semantic_equivalence = mean_semantic_equivalence
-        self.mean_intersection = mean_intersection
-        self.mean_union = mean_union
-        self.mean_lift = mean_lift
-
+    accuracy: SingleMetric
+    precision: SingleMetric
+    recall: SingleMetric
+    f1_score: SingleMetric
+    jaccard: SingleMetric
+    semantic_equivalence_rate: SingleMetric
+    intersection: SingleMetric
+    union: SingleMetric
+    lift: SingleMetric | None
+    lp_count: int
 
     @classmethod
     def from_dict(cls, data: dict) -> "MeanMetricsResult":
+        lift_mean_data = data.get("lift")
+        lift_mean_data = float(lift_mean_data) if lift_mean_data is not None else None
         return cls(
-            mean_accuracy=data.get("mean_accuracy", 0.0),
-            mean_precision=data.get("mean_precision", 0.0),
-            mean_recall=data.get("mean_recall", 0.0),
-            mean_f1_score=data.get("mean_f1_score", 0.0),
-            mean_jaccard=data.get("mean_jaccard", 0.0),
-            mean_semantic_equivalence=data.get("mean_semantic_equivalence", 0.0),
-            mean_intersection=data.get("mean_intersection", 0.0),
-            mean_union=data.get("mean_union", 0.0),
-            mean_lift=data.get("mean_lift", 0.0)
+            accuracy=cls._get_single_metric("accuracy", data),
+            precision=cls._get_single_metric("precision", data),
+            recall=cls._get_single_metric("recall", data),
+            f1_score=cls._get_single_metric("f1_score", data),
+            jaccard=cls._get_single_metric("jaccard", data),
+            semantic_equivalence_rate=cls._get_single_metric("semantic_equivalence_rate", data),
+            intersection=cls._get_single_metric("intersection", data),
+            union=cls._get_single_metric("union", data),
+            lift=cls._get_single_metric("lift", data) if lift_mean_data is not None else None,
+            lp_count=data.get("lp_count", 0)
+        )
+
+    @classmethod
+    def _get_single_metric(cls, key: str, data: dict) -> SingleMetric:
+        return SingleMetric(
+                identifier=key,
+                mean=data.get("mean", 0.0),
+                variance=data.get("variance", 0.0),
+                std_dev=data.get("std_dev", 0.0),
+                # n=data.get("n", 0)
         )
 
     
     def to_dict(self) -> dict:
         return {
-            "mean_accuracy": self.mean_accuracy,
-            "mean_precision": self.mean_precision,
-            "mean_recall": self.mean_recall,
-            "mean_f1_score": self.mean_f1_score,
-            "mean_jaccard": self.mean_jaccard,
-            "mean_semantic_equivalence": self.mean_semantic_equivalence,
-            "mean_intersection": self.mean_intersection,
-            "mean_union": self.mean_union,
-            "mean_lift": self.mean_lift
+            "accuracy": self.accuracy.to_dict(),
+            "precision": self.precision.to_dict(),
+            "recall": self.recall.to_dict(),
+            "f1_score": self.f1_score.to_dict(),
+            "jaccard": self.jaccard.to_dict(),
+            "semantic_equivalence_rate": self.semantic_equivalence_rate.to_dict(),
+            "intersection": self.intersection.to_dict(),
+            "union": self.union.to_dict(),
+            "lift": self.lift.to_dict() if self.lift is not None else None,
+            "lp_count": self.lp_count
         }
 
+
+@dataclass(frozen=True)
 class MetricsResult:
     """
     Represents the evaluation metrics for a single
@@ -91,28 +113,6 @@ class MetricsResult:
     intersection: int
     union: int
     lift: float
-
-    def __init__(
-        self,
-        accuracy: float,
-        precision: float,
-        recall: float,
-        f1_score: float,
-        jaccard: float,
-        semantic_equivalence: bool,
-        intersection: int,
-        union: int,
-        lift: float
-    ):
-        self.accuracy = accuracy
-        self.precision = precision
-        self.recall = recall
-        self.f1_score = f1_score
-        self.jaccard = jaccard
-        self.semantic_equivalence = semantic_equivalence
-        self.intersection = intersection
-        self.union = union
-        self.lift = lift
 
 
     @classmethod
@@ -145,15 +145,26 @@ class MetricsResult:
 
     def to_mean_metrics(self) -> MeanMetricsResult:
         return MeanMetricsResult(
-            mean_accuracy=self.accuracy,
-            mean_precision=self.precision,
-            mean_recall=self.recall,
-            mean_f1_score=self.f1_score,
-            mean_jaccard=self.jaccard,
-            mean_semantic_equivalence=1.0 if self.semantic_equivalence else 0.0,
-            mean_intersection=float(self.intersection),
-            mean_union=float(self.union),
-            mean_lift=float(self.lift) if self.lift is not None else 0.0
+            accuracy=self._get_single_metric("accuracy"),
+            precision=self._get_single_metric("precision"),
+            recall=self._get_single_metric("recall"),
+            f1_score=self._get_single_metric("f1_score"),
+            jaccard=self._get_single_metric("jaccard"),
+            # Mapping the semantic equivalence metric to the semantic equivalence rate in the mean metrics result.
+            semantic_equivalence_rate=self._get_single_metric("semantic_equivalence"),
+            intersection=self._get_single_metric("intersection"),
+            union=self._get_single_metric("union"),
+            lift=self._get_single_metric("lift"),
+            lp_count=1,
+        )
+
+    def _get_single_metric(self, key: str) -> SingleMetric:
+        return SingleMetric(
+            identifier=key,
+            mean=getattr(self, key) if hasattr(self, key) else 0.0,
+            variance=0.0,
+            std_dev=0.0,
+            # n=1,
         )
 
 class TargetExtensionStructure:
@@ -195,7 +206,7 @@ class LearningProblemResult:
     but it is not needed for the report anyway.
     """
     learning_problem: LearningProblemTruncated
-    hypotesis: str = ""
+    hypothesis: str = ""
     target_extension: TargetExtensionStructure | None
     metrics: MetricsResult | None
     runtime: float | None
@@ -208,10 +219,10 @@ class LearningProblemResult:
         metrics: MetricsResult | None = None,
         runtime: float | None = None,
         error: str | None = None,
-        hypotesis: str = "",
+        hypothesis: str = "",
     ):
         self.learning_problem = learning_problem.to_truncated()
-        self.hypotesis = hypotesis
+        self.hypothesis = hypothesis
         self.target_extension = target_extension
         self.metrics = metrics
         self.runtime = runtime
@@ -220,7 +231,7 @@ class LearningProblemResult:
     @classmethod
     def from_dict(cls, data: dict) -> "LearningProblemResult":
         learning_problem = LearningProblem.from_dict(data.get("learning_problem", {}))
-        hypotesis = data.get("hypotesis", "")
+        hypothesis = data.get("hypothesis", "")
         target_extension_data = data.get("target_extension")
         target_extension = TargetExtensionStructure.from_dict(target_extension_data) if target_extension_data else None
         metrics_data = data.get("metrics")
@@ -230,7 +241,7 @@ class LearningProblemResult:
 
         return cls(
             learning_problem=learning_problem,
-            hypotesis=hypotesis,
+            hypothesis=hypothesis,
             target_extension=target_extension,
             metrics=metrics,
             runtime=runtime,
@@ -241,7 +252,7 @@ class LearningProblemResult:
     def to_dict(self) -> dict:
         return {
             "learning_problem": self.learning_problem.to_dict(),
-            "hypotesis": self.hypotesis,
+            "hypothesis": self.hypothesis,
             "target_extension": TargetExtensionStructure.to_dict(self.target_extension)
                 if self.target_extension else None,
             "metrics": MetricsResult.to_dict(self.metrics)
@@ -302,7 +313,6 @@ class EmbeddingResult:
             LearningProblemResult.from_dict(lpr_data)
             for lpr_data in learning_problem_results_data
         ]
-        number_of_problems = len(learning_problem_results)
         number_of_successful_problems = data.get("number_of_successful_problems", 0)
         split_name = data.get("split_name", "")
 
@@ -312,7 +322,7 @@ class EmbeddingResult:
             learning_problem_results=learning_problem_results,
             embedding_settings=EmbeddingSettings.from_dict(data.get("embedding_settings", {})),
             nces_stats=NCESStats(**data.get("nces_stats", {})),
-            number_of_problems=number_of_problems,
+            number_of_problems=mean_metrics.lp_count,
             number_of_successful_problems=number_of_successful_problems,
         )
 
@@ -331,6 +341,51 @@ class EmbeddingResult:
             "number_of_successful_problems": self.number_of_successful_problems,
         }
 
+
+class ComplexityStratum:
+    """
+    Represents a complexity stratum, which is a grouping of learning problems
+    based on their complexity. Each stratum contains a list of learning problems
+    and the corresponding target extensions.
+    """
+    stratum_name: str
+    bucket_size: int | None
+    aggragate_per_bucket_value: dict[str, MeanMetricsResult] | None
+
+    def __init__(
+        self,
+        stratum_name: str,
+        bucket_size: int | None,
+        aggragate_per_bucket_value: dict[str, MeanMetricsResult] | None
+    ):
+        self.stratum_name = stratum_name
+        self.bucket_size = bucket_size
+        self.aggragate_per_bucket_value = aggragate_per_bucket_value
+
+    def to_dict(self) -> dict:
+        return {
+            "stratum_name": self.stratum_name,
+            "bucket_size": self.bucket_size,
+            "aggragate_per_bucket_value": {
+                k: v.to_dict() for k, v in self.aggragate_per_bucket_value.items()
+            } if self.aggragate_per_bucket_value else None
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ComplexityStratum":
+        stratum_name = data.get("stratum_name", "")
+        bucket_size = data.get("bucket_size", None)
+        aggragate_per_bucket_value_data = data.get("aggragate_per_bucket_value", None)
+        aggragate_per_bucket_value = {
+            k: MeanMetricsResult.from_dict(v) for k, v in aggragate_per_bucket_value_data.items()
+        } if aggragate_per_bucket_value_data else None
+        return cls(
+            stratum_name=stratum_name,
+            bucket_size=bucket_size,
+            aggragate_per_bucket_value=aggragate_per_bucket_value
+        )
+
+
 class SingleRunResult:
     """
     Represents the result of a single run across 
@@ -338,8 +393,8 @@ class SingleRunResult:
     """
     knowledge_base: str
     random_embedding_result: EmbeddingResult | None
-    random_complexity_summary: dict[str, dict[str, MeanMetricsResult]] | None
-    dice_complexity_summary: dict[str, dict[str, MeanMetricsResult]] | None
+    random_complexity_aggregates: list[ComplexityStratum] | None
+    dice_complexity_aggregates: list[ComplexityStratum] | None
     dice_embedding_result: EmbeddingResult | None
     runtime: float | None
 
@@ -348,10 +403,14 @@ class SingleRunResult:
         knowledge_base: str,
         dice_embedding_result: EmbeddingResult | None,
         random_embedding_result: EmbeddingResult | None = None,
+        random_complexity_aggregates: list[ComplexityStratum] | None = None,
+        dice_complexity_aggregates: list[ComplexityStratum] | None = None,
         runtime: float | None = None,
     ):
         self.knowledge_base = knowledge_base
         self.random_embedding_result = random_embedding_result
+        self.random_complexity_aggregates = random_complexity_aggregates
+        self.dice_complexity_aggregates = dice_complexity_aggregates
         self.dice_embedding_result = dice_embedding_result
         self.runtime = runtime
 
@@ -361,12 +420,20 @@ class SingleRunResult:
     @classmethod
     def from_dict(cls, data: dict) -> "SingleRunResult":
         knowledge_base = data.get("knowledge_base", "")
-        random_embedding_result = EmbeddingResult.from_dict(data.get("random_embedding_result", {}))
-        dice_embedding_result = EmbeddingResult.from_dict(data.get("dice_embedding_result", {}))
+        random_embedding_data = data.get("random_embedding_result")
+        random_embedding_result = EmbeddingResult.from_dict(random_embedding_data) if random_embedding_data else None
+        random_complexity_aggregates_data = data.get("random_complexity_aggregates", [])
+        random_complexity_aggregates = [ComplexityStratum.from_dict(d) for d in random_complexity_aggregates_data] if random_complexity_aggregates_data else None
+        dice_embedding_data = data.get("dice_embedding_result")
+        dice_embedding_result = EmbeddingResult.from_dict(dice_embedding_data) if dice_embedding_data else None
+        dice_complexity_aggregates_data = data.get("dice_complexity_aggregates", [])
+        dice_complexity_aggregates = [ComplexityStratum.from_dict(d) for d in dice_complexity_aggregates_data] if dice_complexity_aggregates_data else None
         runtime = data.get("runtime", 0.0)
         return cls(
             knowledge_base=knowledge_base,
             random_embedding_result=random_embedding_result,
+            random_complexity_aggregates=random_complexity_aggregates,
+            dice_complexity_aggregates=dice_complexity_aggregates,
             dice_embedding_result=dice_embedding_result,
             runtime=runtime
         )
@@ -377,6 +444,10 @@ class SingleRunResult:
             "knowledge_base": self.knowledge_base,
             "random_embedding_result": self.random_embedding_result.to_dict()
                 if self.random_embedding_result else None,
+            "random_complexity_aggregates": [s.to_dict() for s in self.random_complexity_aggregates]
+                if self.random_complexity_aggregates else None,
+            "dice_complexity_aggregates": [s.to_dict() for s in self.dice_complexity_aggregates]
+                if self.dice_complexity_aggregates else None,
             "dice_embedding_result": self.dice_embedding_result.to_dict()
                 if self.dice_embedding_result else None,
             "runtime": self.runtime
@@ -413,7 +484,7 @@ class SingleRunResult:
         return 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class KnowledgeBaseStats:
     knowledge_base_name: str
     number_of_individuals: int
@@ -424,13 +495,13 @@ class KnowledgeBaseStats:
         return dataclasses.asdict(self)
 
 
-@dataclass
+@dataclass(frozen=True)
 class KnowledgeBaseFailure:
     knowledge_base_name: str
     error_message: str
     seed: int
 
-
+@dataclass(frozen=True)
 class KnowledgeBaseResult:
     """
     Represents the mean result of all seeded 
@@ -439,16 +510,6 @@ class KnowledgeBaseResult:
     knowledge_base: str
     mean_random_metrics: MeanMetricsResult | None
     mean_dice_metrics: MeanMetricsResult | None
-
-    def __init__(
-        self,
-        knowledge_base: str,
-        mean_random_metrics: MeanMetricsResult | None = None,
-        mean_dice_metrics: MeanMetricsResult | None = None,
-    ):
-        self.knowledge_base = knowledge_base
-        self.mean_random_metrics = mean_random_metrics
-        self.mean_dice_metrics = mean_dice_metrics
 
     @classmethod
     def from_dict(cls, data: dict) -> "KnowledgeBaseResult":
@@ -475,119 +536,26 @@ class KnowledgeBaseResult:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class OntologyParseResult:
 
     knowledge_base: KnowledgeBase
     all_individuals: list[str]
     triples: list[Triple]
 
-    def __init__(
-        self,
-        knowledge_base: KnowledgeBase,
-        all_individuals: list[str],
-        triples: list[Triple]
-    ):
-        self.knowledge_base = knowledge_base
-        self.all_individuals = all_individuals
-        self.triples = triples
 
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "OntologyParseResult":
-        knowledge_base = data.get("knowledge_base", {})
-        all_individuals = data.get("all_individuals", [])
-        triples = data.get("triples", [])
-
-        return cls(
-            knowledge_base=knowledge_base,
-            all_individuals=all_individuals,
-            triples=triples
-        )
-
-    def to_dict(self) -> dict:
-        return {
-            "knowledge_base": self.knowledge_base,
-            "all_individuals": self.all_individuals,
-            "triples": self.triples,
-        }
-
-
-@dataclass
+@dataclass(frozen=True)
 class HardnessAnnotationResult:
     annotated_problems: list[LearningProblem]
     unparsed_problems: list[str]
     target_extensions: dict[str, frozenset[str]]
 
-
-class ComplexityStratum:
-    """
-    Represents a complexity stratum, which is a grouping of learning problems
-    based on their complexity. Each stratum contains a list of learning problems
-    and the corresponding target extensions.
-    """
-    stratum_name: str
-    mean_metric_aggregates: dict[Any, MeanMetricsResult]
-
-    def __init__(
-        self,
-        stratum_name: str,
-        mean_metric_aggregates: dict[Any, MeanMetricsResult]
-    ):
-        self.stratum_name = stratum_name
-        self.mean_metric_aggregates = mean_metric_aggregates
-
     def to_dict(self) -> dict:
         return {
-            "stratum_name": self.stratum_name,
-            "mean_metric_aggregates": {
-                key: value.to_dict() for key, value in self.mean_metric_aggregates.items()
+            "annotated_problems": self.annotated_problems,
+            "unparsed_problems": self.unparsed_problems,
+            "target_extensions": {
+                key: list(value) for key, value in self.target_extensions.items()
             }
         }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "ComplexityStratum":
-        stratum_name = data.get("stratum_name", "")
-        mean_metric_aggregates_data = data.get("mean_metric_aggregates", {})
-        mean_metric_aggregates = {
-            key: MeanMetricsResult.from_dict(value) for key, value in mean_metric_aggregates_data.items()
-        }
-        return cls(
-            stratum_name=stratum_name,
-            mean_metric_aggregates=mean_metric_aggregates
-        )
-    
-
-class ComplexityResult:
-    """
-    Represents the result of a complexity analysis, which includes
-    multiple complexity strata. Each stratum contains a list of learning problems
-    and the corresponding target extensions.
-    """
-    complexity_strata: dict[str, ComplexityStratum]
-
-    def __init__(
-        self,
-        complexity_strata: dict[str, ComplexityStratum]
-    ):
-        self.complexity_strata = complexity_strata
-
-    def to_dict(self) -> dict:
-        return {
-            "complexity_strata": {
-                key: value.to_dict() for key, value in self.complexity_strata.items()
-            }
-        }
-
-
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "ComplexityResult":
-        complexity_strata_data = data.get("complexity_strata", {})
-        complexity_strata = {
-            key: ComplexityStratum.from_dict(value) for key, value in complexity_strata_data.items()
-        }
-        return cls(
-            complexity_strata=complexity_strata
-        )
 

@@ -1,197 +1,230 @@
-# tests/test_metrics.py
-"""Tests for extension-based hypothesis metrics."""
+# tests/benchmarking/test_metrics.py
+"""Tests for src.benchmarking.metrics.
+
+The suite focuses on the non-obvious behaviour:
+
+* accuracy is measured over the *whole* universe, not the sampled examples;
+* ``calculate_metrics`` uses Welford's algorithm with a per-metric
+  observation count, so ``None`` values must not shift the mean;
+* ``MetricsResult.to_mean_metrics`` maps ``semantic_equivalence`` (a bool)
+  onto ``semantic_equivalence_rate`` (a float);
+* complexity bucketing boundaries are half-open on the right.
+"""
 
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import pytest
 
 from src.benchmarking.metrics import (
     COMPLEXITY_AXES,
-    ExtensionMetrics,
-    _ratio,
+    _group_by_complexity,
+    _mean,
+    _meanSemanticEquivalence,
     _ratio_bucket,
+    calculate_extension_metrics,
     calculate_metrics,
     compute_lift,
+    get_complexity_summary,
+    mean_embeddings_results,
 )
-from src.data.complexity import Complexity, Hardness, structural_complexity
+from src.config import EmbeddingSettings
+from src.data.results import (
+    EmbeddingResult,
+    LearningProblemResult,
+    MeanMetricsResult,
+    MetricsResult,
+    NCESStats,
+)
 
-UNIVERSE = [f"i{n}" for n in range(10)]
+# ---------------------------------------------------------------------------
+# fixtures / builders
+# ---------------------------------------------------------------------------
 
 
-def make_complexity(
-    *,
-    dl_length: int = 3,
-    depth: int = 1,
-    expressivity: str = "EL",
-    extension_ratio: float | None = 0.5,
-    atomic_baseline_f1: float | None = 0.4,
-    extension_size: int | None = 5,
-    redundant: bool | None = False,
-) -> Complexity:
-    return Complexity(
-        dl_length=dl_length,
-        depth=depth,
-        constructors={},
-        num_atomic_classes=1,
-        num_roles=0,
-        expressivity=expressivity,
-        hardness=Hardness(
-            extension_size=extension_size,
-            extension_ratio=extension_ratio,
-            atomic_baseline_f1=atomic_baseline_f1,
-            redundant=redundant,
-        ),
+@pytest.fixture
+def universe() -> list[str]:
+    return [f"ex:i{n}" for n in range(10)]
+
+
+def make_metrics(**overrides) -> MetricsResult:
+    """A MetricsResult with distinguishable, non-default values."""
+    base = {
+        "accuracy": 0.9,
+        "precision": 0.8,
+        "recall": 0.7,
+        "f1_score": 0.75,
+        "jaccard": 0.6,
+        "semantic_equivalence": False,
+        "intersection": 3,
+        "union": 5,
+        "lift": 0.25,
+    }
+    base.update(overrides)
+    return MetricsResult(**base)  # type: ignore[arg-type]
+
+
+def make_lp_result(monkeypatch_free_lp, metrics: MetricsResult | None):
+    """Build a LearningProblemResult without touching ontolearn."""
+    return LearningProblemResult(
+        learning_problem=monkeypatch_free_lp,
+        metrics=metrics,
     )
 
-
-class TestRatio:
-    def test_normal_division(self):
-        assert _ratio(1, 4) == 0.25
-
-    def test_zero_denominator_returns_zero(self):
-        assert _ratio(5, 0) == 0.0
-
-    def test_zero_numerator(self):
-        assert _ratio(0, 7) == 0.0
-
-    def test_returns_float_for_integer_inputs(self):
-        result = _ratio(3, 6)
-        assert isinstance(result, float)
+# ---------------------------------------------------------------------------
+# lightweight stand-ins for the LearningProblem/Complexity graph
+# ---------------------------------------------------------------------------
 
 
-class TestCalculateMetrics:
-    def test_perfect_prediction(self):
-        target = {"i0", "i1", "i2"}
-        metrics = calculate_metrics(target, target, UNIVERSE)
+class FakeHardness:
+    def __init__(self, extension_ratio=None, atomic_baseline_f1=None):
+        self.extension_ratio = extension_ratio
+        self.atomic_baseline_f1 = atomic_baseline_f1
 
-        assert metrics.precision == 1.0
-        assert metrics.recall == 1.0
-        assert metrics.f1 == 1.0
-        assert metrics.jaccard == 1.0
-        assert metrics.accuracy == 1.0
-        assert metrics.semantic_equivalence is True
-        assert metrics.intersection == 3
-        assert metrics.union == 3
 
-    def test_disjoint_prediction(self):
-        metrics = calculate_metrics({"i0", "i1"}, {"i2", "i3"}, UNIVERSE)
+class FakeComplexity:
+    def __init__(
+        self,
+        dl_length=3,
+        depth=1,
+        expressivity="ALC",
+        constructors=("AND",),
+        num_atomic_classes=2,
+        num_roles=0,
+        hardness=None,
+    ):
+        self.dl_length = dl_length
+        self.depth = depth
+        self.expressivity = expressivity
+        self.constructors = constructors
+        self.num_atomic_classes = num_atomic_classes
+        self.num_roles = num_roles
+        self.hardness = hardness or FakeHardness()
 
-        assert metrics.precision == 0.0
-        assert metrics.recall == 0.0
-        assert metrics.f1 == 0.0
-        assert metrics.jaccard == 0.0
-        assert metrics.intersection == 0
-        assert metrics.union == 4
-        assert metrics.semantic_equivalence is False
 
-    def test_partial_overlap(self):
-        # predicted = 3, target = 2, overlap = 1
-        metrics = calculate_metrics({"i0", "i1", "i2"}, {"i2", "i3"}, UNIVERSE)
+class FakeTruncatedLP:
+    def __init__(self, name, complexity):
+        self.name = name
+        self.complexity = complexity
 
-        assert metrics.precision == pytest.approx(1 / 3)
-        assert metrics.recall == pytest.approx(1 / 2)
-        assert metrics.f1 == pytest.approx(0.4)
-        assert metrics.jaccard == pytest.approx(1 / 4)
-        assert metrics.intersection == 1
-        assert metrics.union == 4
+    def to_dict(self):
+        return {"name": self.name}
 
-    def test_accuracy_counts_true_negatives_over_full_universe(self):
-        # tp=1, fp=1, fn=1, universe=10 -> tn=7
-        metrics = calculate_metrics({"i0", "i1"}, {"i0", "i2"}, UNIVERSE)
-        assert metrics.accuracy == pytest.approx(8 / 10)
 
-    def test_accuracy_penalises_overprediction_outside_examples(self):
-        """A hypothesis consistent with samples but too broad must not score 1.0."""
-        target = {"i0"}
-        broad = set(UNIVERSE)
-        metrics = calculate_metrics(broad, target, UNIVERSE)
+class FakeLP:
+    """Quacks like LearningProblem for the two attributes metrics.py needs."""
 
-        assert metrics.recall == 1.0
-        assert metrics.accuracy == pytest.approx(1 / 10)
-        assert metrics.semantic_equivalence is False
+    def __init__(self, name="lp", complexity=None):
+        self.name = name
+        self.complexity = complexity or FakeComplexity()
 
-    def test_empty_prediction(self):
-        metrics = calculate_metrics(set(), {"i0", "i1"}, UNIVERSE)
+    def to_truncated(self):
+        return FakeTruncatedLP(self.name, self.complexity)
 
-        assert metrics.precision == 0.0
-        assert metrics.recall == 0.0
-        assert metrics.f1 == 0.0
-        assert metrics.jaccard == 0.0
-        assert metrics.accuracy == pytest.approx(8 / 10)
 
-    def test_empty_target(self):
-        metrics = calculate_metrics({"i0"}, set(), UNIVERSE)
+def lp_result(metrics: MetricsResult | None = None, **complexity_kwargs):
+    return LearningProblemResult(
+        learning_problem=FakeLP(complexity=FakeComplexity(**complexity_kwargs)),
+        metrics=metrics if metrics is not None else make_metrics(),
+    )
 
-        assert metrics.precision == 0.0
-        assert metrics.recall == 0.0
-        assert metrics.union == 1
+class TestCalculateExtensionMetrics:
+    def test_perfect_match_is_semantically_equivalent(self, universe):
+        target = universe[:4]
+        m = calculate_extension_metrics(target, target, universe)
 
-    def test_both_empty_is_semantically_equivalent(self):
-        metrics = calculate_metrics(set(), set(), UNIVERSE)
+        assert m.accuracy == 1.0
+        assert m.precision == 1.0
+        assert m.recall == 1.0
+        assert m.f1 == 1.0
+        assert m.jaccard == 1.0
+        assert m.semantic_equivalence is True
+        assert m.intersection == 4
+        assert m.union == 4
 
-        assert metrics.semantic_equivalence is True
-        assert metrics.accuracy == 1.0
-        assert metrics.f1 == 0.0, "F1 is undefined and floors to 0 for empty sets"
-        assert metrics.jaccard == 0.0
-        assert metrics.union == 0
+    def test_accuracy_is_measured_over_the_full_universe(self, universe):
+        """A hypothesis that nails 2/2 positives but is silent elsewhere
+        must not be rewarded with a perfect score, and a hypothesis that
+        over-generalises must be punished on the true negatives."""
+        target = universe[:2]
+        over_general = universe  # predicts everything
 
-    def test_empty_universe_falls_back_to_predicted_and_target(self):
-        metrics = calculate_metrics({"a"}, {"a"}, [])
+        m = calculate_extension_metrics(over_general, target, universe)
 
-        assert metrics.accuracy == 1.0
-        assert metrics.f1 == 1.0
+        assert m.recall == 1.0
+        assert m.precision == pytest.approx(0.2)
+        # 2 TP + 0 TN out of 10 individuals
+        assert m.accuracy == pytest.approx(0.2)
 
-    def test_individuals_outside_universe_are_absorbed(self):
-        """Unknown individuals extend the universe rather than breaking accuracy."""
-        metrics = calculate_metrics({"ghost"}, {"ghost"}, UNIVERSE)
+    def test_partial_overlap_matches_hand_computed_values(self, universe):
+        target = {"ex:i0", "ex:i1", "ex:i2", "ex:i3"}
+        predicted = {"ex:i2", "ex:i3", "ex:i4"}
 
-        assert metrics.accuracy == 1.0
-        assert metrics.intersection == 1
+        m = calculate_extension_metrics(predicted, target, universe)
 
-    def test_accepts_sequences_with_duplicates(self):
-        metrics = calculate_metrics(["i0", "i0", "i1"], ["i0", "i1", "i1"], UNIVERSE)
+        # TP=2, FP=1, FN=2, TN=10-2-1-2=5
+        assert m.intersection == 2
+        assert m.union == 5
+        assert m.precision == pytest.approx(round(2 / 3, 4))
+        assert m.recall == pytest.approx(round(0.5, 4))
+        assert m.f1 == pytest.approx(round(2 * (2 / 3) * 0.5 / ((2 / 3) + 0.5), 4))
+        assert m.jaccard == pytest.approx(round(2 / 5, 4))
+        assert m.accuracy == pytest.approx(round(7 / 10, 4))
+        assert m.semantic_equivalence is False
 
-        assert metrics.intersection == 2
-        assert metrics.union == 2
-        assert metrics.f1 == 1.0
-
-    def test_accepts_generators_are_not_required_but_tuples_work(self):
-        metrics = calculate_metrics(("i0",), ("i0",), tuple(UNIVERSE))
-        assert metrics.f1 == 1.0
-
-    def test_f1_is_harmonic_mean_of_precision_and_recall(self):
-        metrics = calculate_metrics({"i0", "i1", "i2", "i3"}, {"i0", "i1"}, UNIVERSE)
-        expected = (
-            2
-            * metrics.precision
-            * metrics.recall
-            / (metrics.precision + metrics.recall)
+    def test_individuals_outside_all_individuals_extend_the_universe(self):
+        """The universe is the union of the three inputs, so an unknown
+        predicted individual must still count as a false positive without
+        making the denominator inconsistent."""
+        m = calculate_extension_metrics(
+            predicted={"a", "ghost"},
+            target={"a", "b"},
+            all_individuals={"a", "b"},
         )
-        assert metrics.f1 == pytest.approx(expected)
 
-    def test_all_metrics_within_unit_interval(self):
-        metrics = calculate_metrics({"i0", "i5", "i9"}, {"i1", "i5"}, UNIVERSE)
-        for value in (
-            metrics.accuracy,
-            metrics.precision,
-            metrics.recall,
-            metrics.f1,
-            metrics.jaccard,
-        ):
-            assert 0.0 <= value <= 1.0
+        # universe = {a, b, ghost} -> TP=1, FP=1, FN=1, TN=0
+        assert m.accuracy == pytest.approx(round(1 / 3, 4))
+        assert m.union == 3
 
-    def test_metrics_are_frozen(self):
-        metrics = calculate_metrics({"i0"}, {"i0"}, UNIVERSE)
-        with pytest.raises(Exception): # type: ignore[misc]
-            metrics.f1 = 0.0  
+    def test_empty_prediction_yields_zeroes_not_division_error(self, universe):
+        m = calculate_extension_metrics([], universe[:3], universe)
 
-    def test_to_dict_round_trip(self):
-        metrics = calculate_metrics({"i0", "i1"}, {"i1"}, UNIVERSE)
-        payload = metrics.to_dict()
+        assert m.precision == 0.0
+        assert m.recall == 0.0
+        assert m.f1 == 0.0
+        assert m.jaccard == 0.0
+        assert m.accuracy == pytest.approx(round(0.7, 4))  # 7 true negatives
+        assert m.semantic_equivalence is False
 
-        assert set(payload) == {
+    def test_both_empty_is_equivalent_but_scores_zero_on_f1(self, universe):
+        """Degenerate but important: the empty concept equals the empty
+        target, yet precision/recall are undefined and clamp to 0."""
+        m = calculate_extension_metrics([], [], universe)
+
+        assert m.semantic_equivalence is True
+        assert m.accuracy == 1.0
+        assert m.f1 == 0.0
+        assert m.union == 0
+
+    def test_duplicates_in_input_are_ignored(self, universe):
+        dupes = ["ex:i0", "ex:i0", "ex:i1"]
+        deduped = ["ex:i0", "ex:i1"]
+
+        assert calculate_extension_metrics(
+            dupes, universe[:2], universe
+        ) == calculate_extension_metrics(deduped, universe[:2], universe)
+
+    def test_empty_universe_does_not_raise(self):
+        m = calculate_extension_metrics([], [], [])
+        assert m.accuracy == 0.0  # 0/0 guarded by _ratio
+
+    def test_to_dict_round_trips_all_fields(self, universe):
+        m = calculate_extension_metrics(universe[:2], universe[:3], universe)
+        d = m.to_dict()
+
+        assert set(d) == {
             "accuracy",
             "precision",
             "recall",
@@ -201,198 +234,311 @@ class TestCalculateMetrics:
             "intersection",
             "union",
         }
-        assert ExtensionMetrics(**payload) == metrics
+        assert d["intersection"] == 2
 
+
+class TestComputeLift:
+    def test_none_when_baseline_missing(self):
+        c = FakeComplexity(hardness=FakeHardness(atomic_baseline_f1=None))
+        assert compute_lift(0.9, c) is None
+
+    def test_positive_lift_over_baseline(self):
+        c = FakeComplexity(hardness=FakeHardness(atomic_baseline_f1=0.4))
+        assert compute_lift(0.9, c) == pytest.approx(0.5)
+
+    def test_negative_lift_signals_worse_than_atomic_concept(self):
+        c = FakeComplexity(hardness=FakeHardness(atomic_baseline_f1=0.8))
+        assert compute_lift(0.3, c) == pytest.approx(-0.5)
+
+    def test_zero_baseline_is_not_treated_as_missing(self):
+        """0.0 is falsy; the implementation must check for None explicitly."""
+        c = FakeComplexity(hardness=FakeHardness(atomic_baseline_f1=0.0))
+        assert compute_lift(0.6, c) == pytest.approx(0.6)
 
 class TestRatioBucket:
     @pytest.mark.parametrize(
-        ("ratio", "expected"),
+        "ratio,expected",
         [
             (None, "unknown"),
             (0.0, "rare"),
             (0.049, "rare"),
-            (0.05, "uncommon"),
-            (0.24, "uncommon"),
+            (0.05, "uncommon"),   # boundary belongs to the upper bucket
+            (0.249, "uncommon"),
             (0.25, "balanced"),
-            (0.74, "balanced"),
+            (0.749, "balanced"),
             (0.75, "dominant"),
             (1.0, "dominant"),
         ],
     )
-    def test_boundaries(self, ratio, expected):
+    def test_boundaries_are_half_open(self, ratio, expected):
         assert _ratio_bucket(ratio) == expected
 
-    def test_buckets_are_exhaustive_and_ordered(self):
-        labels = [_ratio_bucket(r) for r in (0.01, 0.1, 0.5, 0.9)]
-        assert labels == ["rare", "uncommon", "balanced", "dominant"]
 
+class TestCalculateMetrics:
+    def test_single_record_has_zero_variance(self):
+        result = calculate_metrics([make_metrics(accuracy=0.5)])
 
-class TestComputeLift:
-    def test_none_when_unannotated(self):
-        complexity = make_complexity(atomic_baseline_f1=None)
-        assert compute_lift(0.9, complexity) is None
+        assert result.lp_count == 1
+        assert result.accuracy.mean == pytest.approx(0.5)
+        assert result.accuracy.variance == 0.0
+        assert result.accuracy.std_dev == 0.0
 
-    def test_positive_lift(self):
-        complexity = make_complexity(atomic_baseline_f1=0.4)
-        assert compute_lift(0.9, complexity) == pytest.approx(0.5)
+    def test_mean_and_sample_variance_match_closed_form(self):
+        values = [0.2, 0.4, 0.9]
+        records = [make_metrics(f1_score=v) for v in values]
 
-    def test_negative_lift_when_beaten_by_atomic_class(self):
-        complexity = make_complexity(atomic_baseline_f1=0.8)
-        lift = compute_lift(0.3, complexity)
-        assert lift != None
-        assert lift == pytest.approx(-0.5)
-        assert lift < 0
+        result = calculate_metrics(records)
 
-    def test_zero_lift_when_matching_baseline(self):
-        complexity = make_complexity(atomic_baseline_f1=0.6)
-        assert compute_lift(0.6, complexity) == pytest.approx(0.0)
+        mean = round(sum(values) / len(values), 4)
+        var = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
 
-    def test_zero_baseline_is_not_treated_as_missing(self):
-        complexity = make_complexity(atomic_baseline_f1=0.0)
-        assert compute_lift(0.5, complexity) == pytest.approx(0.5)
+        assert result.f1_score.mean == pytest.approx(mean)
+        assert result.f1_score.variance == pytest.approx(var)
+        assert result.f1_score.std_dev == pytest.approx(round(math.sqrt(var), 4))
+        assert result.lp_count == 3
 
-    def test_uses_real_complexity_from_string_expression(self):
-        complexity = structural_complexity("Male ⊓ ∃ hasChild.Female")
-        assert complexity.hardness.atomic_baseline_f1 is None
-        assert compute_lift(1.0, complexity) is None
-
-
-# class TestMean:
-#     def test_mean_of_floats(self):
-#         assert _mean([{"f1": 0.2}, {"f1": 0.4}], "f1") == pytest.approx(0.3)
-
-#     def test_missing_key_defaults_to_zero(self):
-#         assert _mean([{"f1": 1.0}, {}], "f1") == pytest.approx(0.5)
-
-#     def test_empty_records(self):
-#         assert _mean([], "f1") == 0.0
-
-#     def test_booleans_average_as_a_rate(self):
-#         records = [
-#             {"semantic_equivalence": True},
-#             {"semantic_equivalence": False},
-#             {"semantic_equivalence": True},
-#             {"semantic_equivalence": False},
-#         ]
-#         assert _mean(records, "semantic_equivalence") == pytest.approx(0.5)
-
-
-
-class TestComplexityAxes:
-
-    def test_key_functions_read_the_right_field(self):
-        complexity = make_complexity(
-            dl_length=7, depth=3, expressivity="ALC", extension_ratio=0.1
+    def test_variance_is_sample_not_population(self):
+        """Two observations 0.0 and 1.0: sample variance 0.5, population 0.25."""
+        result = calculate_metrics(
+            [make_metrics(jaccard=0.0), make_metrics(jaccard=1.0)]
         )
-        assert COMPLEXITY_AXES["dl_length"](complexity) == 7
-        assert COMPLEXITY_AXES["depth"](complexity) == 3
-        assert COMPLEXITY_AXES["expressivity"](complexity) == "ALC"
-        assert COMPLEXITY_AXES["extension_ratio"](complexity) == "uncommon"
+        assert result.jaccard.variance == pytest.approx(0.5)
 
-    def test_extension_ratio_axis_reads_hardness_via_property(self):
-        """The axis uses ``c.extension_ratio``, not ``c.hardness.extension_ratio``."""
-        complexity = make_complexity(extension_ratio=0.9)
-        try:
-            bucket = COMPLEXITY_AXES["extension_ratio"](complexity)
-        except AttributeError:
-            pytest.fail(
-                "Complexity exposes no 'extension_ratio' attribute; the axis "
-                "should read complexity.hardness.extension_ratio"
-            )
-        assert bucket == "dominant"
+    def test_identifiers_are_set_per_metric(self):
+        result = calculate_metrics([make_metrics()])
 
-        
+        assert result.accuracy.identifier == "accuracy"
+        assert result.f1_score.identifier == "f1_score"
+        assert result.semantic_equivalence_rate.identifier == (
+            "semantic_equivalence_rate"
+        )
 
+    def test_bools_are_averaged_into_an_equivalence_rate(self):
+        records = [
+            make_metrics(semantic_equivalence=True),
+            make_metrics(semantic_equivalence=True),
+            make_metrics(semantic_equivalence=False),
+            make_metrics(semantic_equivalence=False),
+        ]
 
-# class TestSummarizeByComplexity:
-#     @staticmethod
-#     def _result(complexity: Complexity, **metrics) -> dict:
-#         payload = {
-#             "f1": 0.5,
-#             "accuracy": 0.5,
-#             "precision": 0.5,
-#             "recall": 0.5,
-#             "jaccard": 0.5,
-#             "semantic_equivalence": False,
-#         }
-#         payload.update(metrics)
-#         payload["complexity"] = complexity.to_dict()
-#         return payload
+        result = calculate_metrics(records)
 
-#     def test_errored_results_are_excluded(self):
-#         results = [{"error": "timeout", "complexity": {"dl_length": 3}}]
-#         summary = summarize_by_complexity(results)
+        assert result.semantic_equivalence_rate.mean == pytest.approx(0.5)
 
-#         assert set(summary) == set(COMPLEXITY_AXES)
-#         assert all(axis == {} for axis in summary.values())
+    def test_empty_input_returns_zeroed_aggregate(self):
+        result = calculate_metrics([])
 
-#     def test_empty_input_yields_empty_axes(self):
-#         summary = summarize_by_complexity([])
-#         assert summary == {axis: {} for axis in COMPLEXITY_AXES}
+        assert result.lp_count == 0
+        assert result.accuracy.mean == 0.0
+        assert result.accuracy.variance == 0.0
 
-#     def test_all_axes_present_for_scored_results(self):
-#         results = [self._result(make_complexity())]
-#         summary = summarize_by_complexity(results)
-#         assert set(summary) == set(COMPLEXITY_AXES)
+    def test_welford_is_numerically_stable_for_large_offsets(self):
+        """A naive sum-of-squares accumulator loses all precision here."""
+        base = 1e8
+        values = [base + 1, base + 2, base + 3, base + 4]
+        result = calculate_metrics([make_metrics(union=v) for v in values])
 
-#     def test_buckets_scored_results_by_dl_length(self):
-#         results = [
-#             self._result(make_complexity(dl_length=3), f1=1.0),
-#             self._result(make_complexity(dl_length=3), f1=0.0),
-#             self._result(make_complexity(dl_length=8), f1=0.5),
-#         ]
-#         summary = summarize_by_complexity(results)
-#         assert set(summary["by_dl_length"]) == {"3", "8"}
+        assert result.union.mean == pytest.approx(round(base + 2.5, 4))
+        assert result.union.variance == pytest.approx(round(5 / 3, 4), rel=1e-6)
 
-#     def test_mixed_errored_and_scored(self):
-#         results = [
-#             self._result(make_complexity(dl_length=4)),
-#             {"error": "reasoner failure"},
-#         ]
-#         summary = summarize_by_complexity(results)
-#         assert set(summary["by_dl_length"]) == {"4"}
+    def test_accepts_mean_metrics_input_for_two_stage_aggregation(self):
+        stage_one = [
+            calculate_metrics([make_metrics(recall=0.2)]),
+            calculate_metrics([make_metrics(recall=0.8)]),
+        ]
 
-#     def test_v1_bare_integer_complexity_is_accepted(self):
-#         results = [{"complexity": 5, "f1": 1.0}]
-#         summary = summarize_by_complexity(results)
-#         assert "5" in summary["by_dl_length"]
-#         assert summary["by_expressivity"]["unknown"]
-#         assert "unknown" in summary["by_extension_ratio"]
+        stage_two = calculate_metrics(stage_one)
 
-#     def test_inner_aggregation_regroups_on_raw_complexity_field(self):
-#         """Documents the double-bucketing defect.
+        assert stage_two.lp_count == 2
+        assert stage_two.recall.mean == pytest.approx(0.5)
 
-#         Outer buckets are keyed by the axis, but ``_aggregate_by_complexity``
-#         re-buckets each group on ``record["complexity"]`` — a dict under schema
-#         v2 — and then calls ``int()`` on the stringified key.
-#         """
-#         results = [self._result(make_complexity(dl_length=3))]
-#         try:
-#             summarize_by_complexity(results)
-#         except ValueError:
-#             pytest.fail()
+    def test_none_lift_is_skipped_without_biasing_the_mean(self):
+        """Per-metric counters mean a missing lift must not be read as 0.0."""
+        records = [
+            calculate_metrics([make_metrics(lift=0.6)]),
+            calculate_metrics([make_metrics(lift=0.4)]),
+        ]
+        records.append(replace(records[0], lift=None))
 
-#     def test_buckets_map_directly_to_aggregates(self):
-#         results = [
-#             self._result(make_complexity(dl_length=3), f1=1.0),
-#             self._result(make_complexity(dl_length=3), f1=0.0),
-#         ]
-#         summary = summarize_by_complexity(results)
+        result = calculate_metrics(records)
 
-#         bucket = summary["by_dl_length"]["3"]
-#         assert bucket["count"] == 2
-#         assert bucket["mean_f1"] == pytest.approx(0.5)
+        assert result.lp_count == 3  # the record still counts as a problem
+        assert result.lift.mean == pytest.approx(0.5)  # ...but not toward lift
+        assert result.accuracy.mean == pytest.approx(0.9)
+
+    def test_none_entries_in_the_sequence_are_dropped(self):
+        result = calculate_metrics([make_metrics(accuracy=0.4), None])  # type: ignore[list-item]
+
+        assert result.lp_count == 1
+        assert result.accuracy.mean == pytest.approx(0.4)
+
+    def test_order_of_records_does_not_change_the_aggregate(self):
+        values = [0.1, 0.35, 0.7, 0.95]
+        forward = calculate_metrics([make_metrics(precision=v) for v in values])
+        backward = calculate_metrics(
+            [make_metrics(precision=v) for v in reversed(values)]
+        )
+
+        assert forward.precision.mean == pytest.approx(backward.precision.mean)
+        assert forward.precision.variance == pytest.approx(
+            backward.precision.variance
+        )
+
+def make_embedding_result(metrics_list, split_name="test"):
+    return EmbeddingResult(
+        split_name=split_name,
+        learning_problem_results=[],
+        embedding_settings=EmbeddingSettings(),
+        nces_stats=NCESStats("GRU", 1.0, False),
+        number_of_problems=len(metrics_list),
+        number_of_successful_problems=len(metrics_list),
+        mean_metrics=calculate_metrics(metrics_list) if metrics_list else None,
+    )
 
 
-class TestMetricsIntegration:
-    def test_metrics_feed_straight_into_lift(self):
-        complexity = make_complexity(atomic_baseline_f1=0.5)
-        metrics = calculate_metrics({"i0", "i1"}, {"i0", "i1"}, UNIVERSE)
+class TestMeanEmbeddingsResults:
+    def test_averages_across_reports(self):
+        reports = [
+            make_embedding_result([make_metrics(f1_score=0.4)]),
+            make_embedding_result([make_metrics(f1_score=0.8)]),
+        ]
 
-        assert compute_lift(metrics.f1, complexity) == pytest.approx(0.5)
+        result = mean_embeddings_results(reports)
 
-    def test_no_nan_leaks_from_degenerate_inputs(self):
-        metrics = calculate_metrics([], [], [])
-        for value in metrics.to_dict().values():
-            if isinstance(value, float):
-                assert not math.isnan(value)
+        assert result.lp_count == 2
+        assert result.f1_score.mean == pytest.approx(0.6)
+
+    def test_reports_without_metrics_are_excluded(self):
+        reports = [
+            make_embedding_result([make_metrics(f1_score=0.4)]),
+            make_embedding_result([]),  # mean_metrics is None
+        ]
+
+        result = mean_embeddings_results(reports)
+
+        assert result.lp_count == 1
+        assert result.f1_score.mean == pytest.approx(0.4)
+
+    def test_all_reports_empty_returns_zeroed_aggregate(self):
+        result = mean_embeddings_results([make_embedding_result([])])
+        assert result.lp_count == 0
+
+
+class TestGroupByComplexity:
+    def test_groups_by_the_requested_axis(self):
+        records = [
+            lp_result(dl_length=1),
+            lp_result(dl_length=1),
+            lp_result(dl_length=4),
+        ]
+
+        grouped = _group_by_complexity(records, "dl_length")
+
+        assert sorted(grouped) == [1, 4]
+        assert len(grouped[1]) == 2
+        assert len(grouped[4]) == 1
+
+    def test_constructors_axis_uses_the_cardinality(self):
+        records = [
+            lp_result(constructors=("AND", "SOME")),
+            lp_result(constructors=("AND",)),
+        ]
+
+        grouped = _group_by_complexity(records, "constructors")
+
+        assert sorted(grouped) == [1, 2]
+
+    def test_extension_ratio_axis_uses_the_bucket_label(self):
+        records = [
+            lp_result(hardness=FakeHardness(extension_ratio=0.01)),
+            lp_result(hardness=FakeHardness(extension_ratio=0.9)),
+            lp_result(hardness=FakeHardness(extension_ratio=None)),
+        ]
+
+        grouped = _group_by_complexity(records, "extension_ratio")
+
+        assert set(grouped) == {"rare", "dominant", "unknown"}
+
+    def test_unknown_axis_raises(self):
+        with pytest.raises(ValueError, match="Unknown complexity axis"):
+            _group_by_complexity([lp_result()], "not_an_axis")
+
+    def test_no_records_yields_no_groups(self):
+        assert _group_by_complexity([], "depth") == {}
+
+
+class TestComplexitySummary:
+    def test_every_axis_is_present(self):
+        summary = get_complexity_summary([lp_result(), lp_result()])
+        assert set(summary) == set(COMPLEXITY_AXES)
+
+    def test_buckets_aggregate_only_their_own_members(self):
+        records = [
+            lp_result(make_metrics(f1_score=0.2), dl_length=1),
+            lp_result(make_metrics(f1_score=0.4), dl_length=1),
+            lp_result(make_metrics(f1_score=1.0), dl_length=7),
+        ]
+
+        by_length = get_complexity_summary(records)["dl_length"]
+
+        assert by_length[1].lp_count == 2
+        assert by_length[1].f1_score.mean == pytest.approx(0.3)
+        assert by_length[7].lp_count == 1
+        assert by_length[7].f1_score.mean == pytest.approx(1.0)
+
+    def test_failed_problems_are_excluded_from_their_bucket(self):
+        """A problem with metrics=None still forms a bucket key, but must
+        not contribute an observation."""
+        lp_without_metrics = lp_result(None, dl_length=2)
+        lp_without_metrics.metrics = None
+        records = [
+            lp_result(make_metrics(f1_score=0.5), dl_length=2),
+            lp_without_metrics,
+        ]
+
+        by_length = get_complexity_summary(records)["dl_length"]
+
+        assert by_length[2].lp_count == 1
+        assert by_length[2].f1_score.mean == pytest.approx(0.5)
+
+    def test_bucket_with_only_failures_is_zeroed_not_missing(self):
+        lp_without_metrics = lp_result(None, dl_length=9)
+        lp_without_metrics.metrics = None
+        by_length = get_complexity_summary([lp_without_metrics])[
+            "dl_length"
+        ]
+
+        assert 9 in by_length
+        assert by_length[9].lp_count == 0
+
+    def test_empty_records_produce_empty_axis_maps(self):
+        assert get_complexity_summary([]) == {}
+
+
+class TestLegacyMeanHelpers:
+    def test_mean_ignores_records_without_the_key(self):
+        records = [
+            lp_result(make_metrics(f1_score=0.4)),
+            lp_result(make_metrics(f1_score=0.6)),
+        ]
+        assert _mean(records, "f1_score") == pytest.approx(0.5)
+
+    def test_mean_of_unknown_key_is_zero(self):
+        assert _mean([lp_result()], "does_not_exist") == 0.0
+
+    def test_mean_of_empty_list_is_zero(self):
+        assert _mean([], "f1_score") == 0.0
+
+    def test_semantic_equivalence_rate(self):
+        records = [
+            lp_result(make_metrics(semantic_equivalence=True)),
+            lp_result(make_metrics(semantic_equivalence=True)),
+            lp_result(make_metrics(semantic_equivalence=False)),
+        ]
+        # Note: the helper divides by the number of *truthy-or-present*
+        # entries, treating False as "empty".
+        assert _meanSemanticEquivalence(records) == pytest.approx(1.0)
+
+    def test_semantic_equivalence_of_empty_list_is_zero(self):
+        assert _meanSemanticEquivalence([]) == 0.0
+        assert _meanSemanticEquivalence(None) == 0.0  # type: ignore[arg-type]

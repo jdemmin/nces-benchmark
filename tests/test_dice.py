@@ -78,7 +78,7 @@ def test_embedding_report_is_written(
         base_settings,
         seed=1,
         embedding_conditions=["random"],
-        expected_dim=64,
+        nces_embedding_dim=64,
     )
     payload = json.loads(
         (embeddings_dir / "embedding_report.json").read_text(

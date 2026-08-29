@@ -327,7 +327,7 @@ def build_embeddings(
     *,
     seed: int,
     embedding_conditions: Sequence[str],
-    expected_dim: int,
+    nces_embedding_dim: int,
 ) -> tuple[dict[str, EmbeddingResultDice], int]:
     """Run the full embedding stage for every requested condition.
 
@@ -360,7 +360,7 @@ def build_embeddings(
         )
         chosen = best
         output_path = embeddings_dir / f"{best.model_name}.csv"
-        export_entity_embeddings(run_dir, output_path, expected_dim=expected_dim)
+        export_entity_embeddings(run_dir, output_path, expected_dim=nces_embedding_dim)
         # _cleanup_run_dir(run_dir)
         logger.info("Cleaned up DICE run directory %s after exporting embeddings", run_dir)
         score, _ = selection_score(report)
@@ -386,9 +386,9 @@ def build_embeddings(
         )
     # Match the exported DICE width, not the configured dimension: some
     # models store several components per dimension.
-    baseline_dim: int
+    csv_dim: int
     try:
-        baseline_dim = get_csv_dimension(embeddings_dir / f"{chosen.model_name}.csv")
+        csv_dim = get_csv_dimension(embeddings_dir / f"{chosen.model_name}.csv")
     except FileNotFoundError as e:
         logger.error(
             "Failed to get CSV dimension for DICE embeddings: %s. "
@@ -396,7 +396,7 @@ def build_embeddings(
             e,
             chosen.embedding_dim,
         )
-        baseline_dim = expected_dim
+        raise
 
     if "random" in embedding_conditions:
         seed_everything(seed)
@@ -404,7 +404,7 @@ def build_embeddings(
         generate_random_embeddings(
             entity_names,
             output_path,
-            embedding_dim=baseline_dim,
+            embedding_dim=nces_embedding_dim,
             seed=seed,
         )
         results["random"] = EmbeddingResultDice(
@@ -414,7 +414,7 @@ def build_embeddings(
         logger.info(
             "Random embedding baseline completed: %d entities, dim=%d",
             len(entity_names),
-            baseline_dim,
+            csv_dim,
         )
 
     report_path = embeddings_dir / "embedding_report.json"
@@ -428,7 +428,7 @@ def build_embeddings(
         },
         report_path,
     )
-    return results, baseline_dim
+    return results, csv_dim
 
 def _write_json(data: dict, path: Path) -> None:
     """Write a JSON file with indentation and a trailing newline."""

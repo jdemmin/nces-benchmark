@@ -10,8 +10,16 @@ from typing import Any
 
 from ontolearn.knowledge_base import KnowledgeBase
 
-from src.benchmarking.metrics import get_complexity_summary, mean_embeddings_results
-from src.config import BenchmarkConfiguration
+from src.benchmarking.metrics import (
+    build_complexity_strata,
+    get_complexity_summary,
+    mean_embeddings_results,
+)
+from src.benchmarking.wilcoxon import (
+    holm_adjust_across_complexity_strata,
+    holm_adjust_across_kbs,
+)
+from src.config import BenchmarkConfiguration, DataGenerationSettings
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
     LearningProblem,
@@ -88,14 +96,13 @@ def run_benchmark(
     updated_benchmark_name = update_false_dir_names(config.project.benchmark_name)
     benchmark_dir = base / Path(updated_benchmark_name)
 
-    reports: list[SingleRunResult] = []
-    failures: list[KnowledgeBaseFailure] = []
+    reports: dict[str, dict[str, SingleRunResult]] = {}
+    failures: dict[str, KnowledgeBaseFailure] = {}
 
+    # TODO: switched loops. Will make problems downstream.
     for kb_name in selected_kbs:
         for seed in selected_seeds:
             logger.info("=== %s | seed %d ===", kb_name, seed)
-            # set the random seed for reproducibility for every environment that uses
-            # randomness, including LPGen, Ontolearn, NumPy, and PyTorch
             try:
                 report = run_single(
                     kb_name,
@@ -111,61 +118,77 @@ def run_benchmark(
                     seed=seed,
                     error_message=str(error),
                 )
-                failures.append(knowledge_base_failure)
+                failures[f"{kb_name}_{seed}"] = knowledge_base_failure
                 continue
-            reports.append(report)
-        complexity_summary = get_complexity_summary([
-            # flattens list of lists of LearningProblemResults into a single list
-            item for sublist in [
-                r.random_embedding_result.learning_problem_results
-                for r in reports if r.random_embedding_result is not None
-            ]
-            for item in sublist
-        ])
-        _write_json(
-            payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
-            path=benchmark_dir / f"{kb_name}_mean_across_seeds_random_complexity_summary.json",
-        )
-        complexity_summary = get_complexity_summary([
-            # flattens list of lists of LearningProblemResults into a single list
-            item for sublist in [
-                r.dice_embedding_result.learning_problem_results
-                for r in reports if r.dice_embedding_result is not None
-            ]
-            for item in sublist
-        ])
-        _write_json(
-            payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
-            path=benchmark_dir / f"{kb_name}_mean_across_seeds_dice_complexity_summary.json",
-        )
-        random_mean = mean_embeddings_results(
-            [r.random_embedding_result for r in reports if r.random_embedding_result is not None]
-        )
-        dice_mean = mean_embeddings_results(
-            [r.dice_embedding_result for r in reports if r.dice_embedding_result is not None]
-        )
-        knowledge_base_result = KnowledgeBaseResult(
-            knowledge_base=kb_name,
-            mean_random_metrics=random_mean,
-            mean_dice_metrics=dice_mean,
-        )
-        _write_json(
-            payload=knowledge_base_result.to_dict(),
-            path=benchmark_dir / f"{kb_name}_mean_across_seeds.json",
-        )
+            reports.setdefault(kb_name, {})[str(seed)] = report
+            _write_json(payload=holm_adjust_across_complexity_strata(report), path=benchmark_dir / f"{kb_name}_holm_adjusted_{seed}_across_strata.json")
+            # despite what the methods says, this is actually across seeds
+            _write_json(payload=holm_adjust_across_kbs(reports[kb_name]), path=benchmark_dir / f"KBs_holm_adjusted_{seed}.json")
+        # _write_complexity_summary(reports, benchmark_dir, kb_name)
+        # _write_embeddings_summary(reports, benchmark_dir, kb_name)
+    #_clean_benchmark_dir(benchmark_dir)
     summary = {
         "num_runs": len(reports),
         "failures": failures,
     }
     _write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
+
+    return summary
+
+
+def _clean_benchmark_dir(benchmark_dir: Path):
     logger.info("Proceeding to zip the benchmark results directory %s", benchmark_dir)
     import shutil
     shutil.make_archive(str(benchmark_dir), 'zip', str(benchmark_dir))
     logger.info("Completed zipping the benchmark results directory %s", benchmark_dir)
-    # logger.info("Proceeding to remove the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
-    # shutil.rmtree(benchmark_dir)
-    # logger.info("Completed removal of the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
-    return summary
+    logger.info("Proceeding to remove the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
+    shutil.rmtree(benchmark_dir)
+    logger.info("Completed removal of the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
+
+
+def _write_embeddings_summary(reports: dict[str, SingleRunResult], benchmark_dir: Path, kb_name: str):
+    random_mean = mean_embeddings_results(
+        [r.random_embedding_result for r in reports.values() if r.random_embedding_result is not None]
+    )
+    dice_mean = mean_embeddings_results(
+        [r.dice_embedding_result for r in reports.values() if r.dice_embedding_result is not None]
+    )
+    knowledge_base_result = KnowledgeBaseResult(
+        knowledge_base=kb_name,
+        mean_random_metrics=random_mean,
+        mean_dice_metrics=dice_mean,
+    )
+    _write_json(
+        payload=knowledge_base_result.to_dict(),
+        path=benchmark_dir / f"{kb_name}_mean_across_seeds.json",
+    )
+
+
+def _write_complexity_summary(reports: dict[str, SingleRunResult], benchmark_dir: Path, kb_name: str):
+    complexity_summary = get_complexity_summary([
+        # flattens list of lists of LearningProblemResults into a single list
+        item for sublist in [
+            r.random_embedding_result.learning_problem_results
+            for r in reports.values() if r.random_embedding_result is not None
+        ]
+        for item in sublist
+    ])
+    _write_json(
+        payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
+        path=benchmark_dir / f"{kb_name}_mean_across_seeds_random_complexity_summary.json",
+    )
+    complexity_summary = get_complexity_summary([
+        # flattens list of lists of LearningProblemResults into a single list
+        item for sublist in [
+            r.dice_embedding_result.learning_problem_results
+            for r in reports.values() if r.dice_embedding_result is not None
+        ]
+        for item in sublist
+    ])
+    _write_json(
+        payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
+        path=benchmark_dir / f"{kb_name}_mean_across_seeds_dice_complexity_summary.json",
+    )
 
 
 def run_single(
@@ -189,61 +212,88 @@ def run_single(
     handler = configure_logging(paths.logs_dir / f"{knowledge_base_name}_{seed}.log")
     started = time.perf_counter()
     try:
-        # might be non deterministic
         ontology_parse_result = _stage_parse_ontology(kb_path, seed=seed)
         knowledge_base = ontology_parse_result.knowledge_base
         logger.info("Completed Stage 1: Ontology parsing.")
-        problems = generate_learning_problems(
-            kb_path,
-            paths.nces_data_dir,
-            config.data_generation,
-            seed=seed,
-        )
-        if not problems:
-            raise RuntimeError(
-                f"No non-degenerate learning problems generated for {knowledge_base_name}."
-            )
-        logger.info("Completed Stage 2: Learning-problem generation for %d problems.", len(problems))
-        # Knowledge base only. No embedding-derived quantity may enter here, or
-        # the benchmark's independent variable is contaminated.
-        seed_everything(seed)
-        split = split_learning_problems(
-            problems,
-            seed=seed,
-            stratify_by=config.project.stratify_by,
-        )
-        #save_learning_problems(problems, paths.nces_data_dir / "learning_problems.json")
-        save_split(split, paths.nces_data_dir)
-        #logger.info("Saved learning problems to %s", paths.nces_data_dir / "learning_problems.json")
-        len_split_test = len(split["test"])
-        len_split_train = len(split["train"])
-        logger.info(
-            "Split %d learning problems into %d train / %d test",
-            len_split_train + len_split_test,
-            len_split_train,
-            len_split_test,
-        )
-        logger.info("Completed Stage 3: Learning-problem splitting.")
-        unparsed: list[str] = []
+
+        problems: list[LearningProblem] = []
+        split: dict[str, list[LearningProblem]] = {"train": [], "test": []}
         target_extensions: dict[str, frozenset[str]] = {}
-        for key, value in split.items():
-            logger.info(f"Annotating hardness for `{key}` split of size {len(value)}")
-            annotation_result = _stage_hardness_annotation(
-                value, knowledge_base, ontology_parse_result.all_individuals
+
+        current_data_settings_hash = _hash_data_generation_settings(config.data_generation)
+        old_data_settings_hash = _read_data_generation_settings_hash(paths.nces_data_dir)
+
+        hash_file_path = paths.nces_data_dir / "data_generation_settings_hash.txt"
+        if old_data_settings_hash is None or old_data_settings_hash != current_data_settings_hash:
+            import os
+
+            logger.info("Data generation settings have changed. Updating hash file at %s", hash_file_path)
+            if os.path.exists(hash_file_path):
+                os.remove(hash_file_path)
+            if os.path.exists(paths.learning_problems_path):
+                os.remove(paths.learning_problems_path)
+            with open(hash_file_path, "x", encoding="utf-8") as f:
+                f.write(current_data_settings_hash)
+            problems = generate_learning_problems(
+                kb_path,
+                paths.nces_data_dir,
+                config.data_generation,
+                seed=current_data_settings_hash,
             )
-            split[key] = annotation_result.annotated_problems
-            unparsed.extend(annotation_result.unparsed_problems)
-            target_extensions.update(annotation_result.target_extensions)
-        logger.info("Completed Stage 4: Hardness annotation for %d learning problems", len_split_train + len_split_test)
-        if unparsed:
-            logger.warning(
-                "%d of %d target concepts could not be parsed; used sampled "
-                "positives as their extension (ids: %s%s)",
-                len(unparsed),
-                len(problems),
-                ", ".join(unparsed[:5]),
-                ", ..." if len(unparsed) > 5 else "",
+            logger.info("Completed Stage 2: Learning-problem generation for %d problems.", len(problems))
+            if not problems:
+                raise RuntimeError(
+                    f"No non-degenerate learning problems generated for {knowledge_base_name}."
+                )
+            split = split_learning_problems(
+                problems,
+                stratify_by=config.project.stratify_by,
+                seed=current_data_settings_hash,
             )
+            len_split_test = len(split["test"])
+            len_split_train = len(split["train"])
+            logger.info(
+                "Split %d learning problems into %d train / %d test",
+                len_split_train + len_split_test,
+                len_split_train,
+                len_split_test,
+            )
+            logger.info("Completed Stage 3: Learning-problem splitting.")
+
+            unparsed: list[str] = []
+            for key, value in split.items():
+                logger.info(f"Annotating hardness for `{key}` split of size {len(value)}")
+                annotation_result = _stage_hardness_annotation(
+                    value, knowledge_base, ontology_parse_result.all_individuals
+                )
+                split[key] = annotation_result.annotated_problems
+                unparsed.extend(annotation_result.unparsed_problems)
+                target_extensions.update(annotation_result.target_extensions)
+            logger.info("Completed Stage 4: Hardness annotation for %d learning problems", len_split_train + len_split_test)
+
+            if unparsed:
+                logger.warning(
+                    "%d of %d target concepts could not be parsed; used sampled "
+                    "positives as their extension (ids: %s%s)",
+                    len(unparsed),
+                    len(problems),
+                    ", ".join(unparsed[:5]),
+                    ", ..." if len(unparsed) > 5 else "",
+                )
+            # moved here to save the split immediately after hardness annotation.
+            # Less reasoner calls needed if we save the split here immediately.
+            save_split(split, paths.nces_data_dir)
+        else:
+            logger.info(
+                "Data generation settings have not changed." \
+                "Using cached learning problems and splits."
+            )
+            split = _load_split(paths.nces_data_dir)
+            logger.info(
+                "Loaded cached learning problems and splits."
+            )
+            logger.info("Starting Stage 5: Embedding generation.")
+        
         embedding_report, m = _embedding_stage(
             paths=paths,
             kb_path=kb_path,
@@ -270,6 +320,7 @@ def run_single(
             "Completed Stage 6: NCES training and evaluation for all conditions."
         )
         single_run_result.set_runtime(round(time.perf_counter() - started, 3))
+        # Write single-run result to JSON. Complexity summaries will be written separately.
         _write_json(
             payload=single_run_result.to_dict(),
             path=paths.nces_results_dir / "single_run_result.json",
@@ -296,8 +347,8 @@ def run_single(
             paths.nces_results_dir / "dice_complexity_summary.json",
             paths.nces_results_dir / "random_complexity_summary.json",
         )
-        single_run_result.random_complexity_summary = random_complexity_summary
-        single_run_result.dice_complexity_summary = dice_complexity_summary
+        single_run_result.random_complexity_aggregates = build_complexity_strata(random_complexity_summary)
+        single_run_result.dice_complexity_aggregates = build_complexity_strata(dice_complexity_summary)
         atomic_extensions = compute_atomic_class_extensions(knowledge_base)
         knowledge_base_stats = KnowledgeBaseStats(
             knowledge_base_name=knowledge_base_name,
@@ -320,6 +371,55 @@ def run_single(
             logging.getLogger().removeHandler(handler)
             handler.close()
         
+
+def _save_benchmark_learning_problems(problems: list[LearningProblem], path: Path) -> None:
+    """Save the benchmark learning problems to the specified path."""
+    with open(path, "w") as f:
+        json.dump([problem.to_dict() for problem in problems], f, indent=4)
+
+def _load_benchmark_learning_problems(path: Path) -> list[LearningProblem]:
+    """Load the benchmark learning problems from the specified path."""
+    if not path.exists():
+        return []
+    with open(path, "r") as f:
+        return [LearningProblem.from_dict(d) for d in json.load(f)]
+
+def _load_split(path: Path) -> dict[str, list[LearningProblem]]:
+    """Load the data split from the specified directory."""
+    split_file_path = path / "train_problems.json"
+    split = {"train": [], "test": []}
+    if split_file_path.exists():
+        with open(split_file_path, "r") as f:
+            split["train"].extend(LearningProblem.from_dict(d) for d in json.load(f))
+            split["train"] = sorted(split["train"], key=lambda p: p.id)
+    split_file_path = path / "test_problems.json"
+    if split_file_path.exists():
+        with open(split_file_path, "r") as f:
+            split["test"].extend(LearningProblem.from_dict(d) for d in json.load(f))
+            split["test"] = sorted(split["test"], key=lambda p: p.id)
+    return split
+
+
+def _read_data_generation_settings_hash(path: Path) -> str | None:
+    """
+    Read the previously stored hash of the data generation settings, if it exists.
+    Given path to the directory containing the data generation settings hash file.
+    """
+    hash_file_path = path / "data_generation_settings_hash.txt"
+    if hash_file_path.exists():
+        with open(hash_file_path, "r") as f:
+            return f.read().strip()
+    return None
+
+
+def _hash_data_generation_settings(data_generation_settings: DataGenerationSettings) -> str:
+    """Compute a hash of the data generation settings for reproducibility."""
+    import hashlib
+    import json
+
+    settings_json = json.dumps(data_generation_settings.__dict__, sort_keys=True)
+    return hashlib.sha256(settings_json.encode("utf-8")).hexdigest()
+
 
 def _remove_trials(path: Path) -> None:
     """Remove embeddings that are not used in the benchmark run."""
@@ -351,41 +451,6 @@ def _convert_complexity_summary_to_dict(
         }
         for axis, complexity_dict in complexity_summary.items()
     }
-
-
-# def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
-#     """Log the spread along each complexity axis.
-
-#     Thin strata make stratified splitting degenerate -- a stratum of one or
-#     two problems is handed entirely to train -- so this is the signal for
-#     whether the configured ``stratify_by`` axis is viable.
-#     """
-
-#     axes: dict[str, dict[str, int]] = {
-#         "dl_length": {},
-#         "depth": {},
-#         "expressivity": {},
-#         "redundant": {},
-#     }
-#     for problem in problems:
-#         for axis, counts in axes.items():
-#             try:
-#                 key = str(getattr(problem.complexity, axis))
-#             except AttributeError:
-#                 key = str(getattr(problem.complexity.hardness, axis))
-#             counts[key] = counts.get(key, 0) + 1
-
-#     for axis, counts in axes.items():
-#         rendered = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
-#         logger.info("Complexity distribution by %s: %s", axis, rendered)
-#         thin = [k for k, v in counts.items() if v < 3]
-#         if thin and axis != "redundant":
-#             logger.warning(
-#                 "Axis %r has strata with fewer than 3 learning problems (%s); "
-#                 "stratifying on it will starve the test split",
-#                 axis,
-#                 ", ".join(sorted(thin)),
-#             )
 
 
 def _order_embedding_conditions(embedding_conditions: list[str]) -> None:
@@ -422,7 +487,7 @@ def _embedding_stage(
             embedding_settings=benchmark_settings.embedding,
             seed=seed,
             embedding_conditions=benchmark_settings.project.embedding_conditions,
-            expected_dim=benchmark_settings.nces.embedding_dim,
+            nces_embedding_dim=benchmark_settings.nces.embedding_dim,
         )
     return report, m
 
@@ -518,6 +583,7 @@ def _stage_train_eval_nces(
         # location where the trained model will be saved
         # and parent directory where the evaluation will read from
         trained_model_path = paths.nces_suffix_dir(condition)
+        embedding_dim = config.nces.embedding_dim if condition == "random" else m
         logger.info(
             "Starting NCES training for condition '%s'" \
             "with embeddings from '%s'",
@@ -530,7 +596,7 @@ def _stage_train_eval_nces(
             trained_models_dir=trained_model_path,
             train_data=train_data,
             settings=config.nces,
-            m=m,
+            m=embedding_dim,
             seed=seed,
         )
         _write_json(
@@ -557,7 +623,7 @@ def _stage_train_eval_nces(
             all_individuals=all_individuals,
             target_extensions=target_extensions,
             split_name="test",
-            m=m,
+            m=embedding_dim,
             trained_model_settings=embedding_report[condition].embedding_settings,
             seed=seed,
             degraded=training.degraded,

@@ -468,7 +468,8 @@ class ProjectSettings:
         try:
             payload = _read_json(path or INPUT_DIR / "project_settings.json")
         except FileNotFoundError:
-            # Provide a default project settings if the file is missing. relevant for CI/CD pipelines that don't have the input directory mounted.
+            # Provide a default project settings if the file is missing. relevant
+            # for CI/CD pipelines that don't have the input directory mounted.
             logger.info(
                 "project_settings.json not found. Using default project settings."
             )

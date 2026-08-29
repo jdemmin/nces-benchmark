@@ -29,15 +29,15 @@ def raw_payload() -> dict:
 class TestNormalise:
     def test_ids_are_independent_of_input_order(self):
         payload = raw_payload()
-        forward = _normalise(payload, namespace=NS, seed=1)
+        forward = _normalise(payload, namespace=NS)
         reversed_payload = dict(reversed(list(payload.items())))
-        backward = _normalise(reversed_payload, namespace=NS, seed=1)
+        backward = _normalise(reversed_payload, namespace=NS)
         assert {p.id for p in forward} == {p.id for p in backward}
 
     def test_ids_are_independent_of_seed(self):
         payload = raw_payload()
-        a = _normalise(payload, namespace=NS, seed=1)
-        b = _normalise(payload, namespace=NS, seed=999)
+        a = _normalise(payload, namespace=NS)
+        b = _normalise(payload, namespace=NS)
         assert {p.id: p.target_concept for p in a} == {
             p.id: p.target_concept for p in b
         }
@@ -45,29 +45,29 @@ class TestNormalise:
     def test_concept_to_id_mapping_survives_added_problems(self):
         """The core cross-run guarantee: ids do not renumber."""
         payload = raw_payload()
-        before = {p.target_concept: p.id for p in _normalise(payload, namespace=NS, seed=1)}
+        before = {p.target_concept: p.id for p in _normalise(payload, namespace=NS)}
 
         payload["E ⊔ F"] = {
             "positive examples": ["i9"],
             "negative examples": ["i10"],
         }
-        after = {p.target_concept: p.id for p in _normalise(payload, namespace=NS, seed=1)}
+        after = {p.target_concept: p.id for p in _normalise(payload, namespace=NS)}
 
         for concept, problem_id in before.items():
             assert after[concept] == problem_id
 
     def test_concept_to_id_mapping_survives_dropped_problems(self):
         payload = raw_payload()
-        before = {p.target_concept: p.id for p in _normalise(payload, namespace=NS, seed=1)}
+        before = {p.target_concept: p.id for p in _normalise(payload, namespace=NS)}
         del payload["D"]
-        after = {p.target_concept: p.id for p in _normalise(payload, namespace=NS, seed=1)}
+        after = {p.target_concept: p.id for p in _normalise(payload, namespace=NS)}
         assert all(after[c] == i for c, i in before.items() if c != "D")
 
     def test_degenerate_problems_are_skipped(self):
         payload = raw_payload()
         payload["Empty"] = {"positive examples": [], "negative examples": ["i9"]}
         payload["AlsoEmpty"] = {"positive examples": ["i9"], "negative examples": []}
-        problems = _normalise(payload, namespace=NS, seed=1)
+        problems = _normalise(payload, namespace=NS)
         concepts = {p.target_concept for p in problems}
         assert "Empty" not in concepts
         assert "AlsoEmpty" not in concepts
@@ -76,7 +76,7 @@ class TestNormalise:
     def test_dropping_degenerate_does_not_shift_other_ids(self):
         """The enumerate-skip bug regression test."""
         clean = raw_payload()
-        before = {p.target_concept: p.id for p in _normalise(clean, namespace=NS, seed=1)}
+        before = {p.target_concept: p.id for p in _normalise(clean, namespace=NS)}
 
         with_degenerate = raw_payload()
         with_degenerate["Zzz"] = {
@@ -85,41 +85,41 @@ class TestNormalise:
         }
         after = {
             p.target_concept: p.id
-            for p in _normalise(with_degenerate, namespace=NS, seed=1)
+            for p in _normalise(with_degenerate, namespace=NS)
         }
         assert before == after
 
     def test_examples_are_sorted(self):
-        problems = _normalise(raw_payload(), namespace=NS, seed=1)
+        problems = _normalise(raw_payload(), namespace=NS)
         for problem in problems:
             assert problem.pos_example == sorted(problem.pos_example)
             assert problem.neg_example == sorted(problem.neg_example)
 
     def test_output_sorted_by_id(self):
-        problems = _normalise(raw_payload(), namespace=NS, seed=1)
+        problems = _normalise(raw_payload(), namespace=NS)
         assert [p.id for p in problems] == sorted(p.id for p in problems)
 
     def test_accepts_list_payload(self):
         payload = list(raw_payload().items())
-        problems = _normalise(payload, namespace=NS, seed=1)
+        problems = _normalise(payload, namespace=NS)
         assert len(problems) == 3
 
     def test_list_and_dict_payloads_agree(self):
-        as_dict = _normalise(raw_payload(), namespace=NS, seed=1)
-        as_list = _normalise(list(raw_payload().items()), namespace=NS, seed=1)
+        as_dict = _normalise(raw_payload(), namespace=NS)
+        as_list = _normalise(list(raw_payload().items()), namespace=NS)
         assert [p.id for p in as_dict] == [p.id for p in as_list]
 
     def test_namespace_is_applied(self):
-        problems = _normalise(raw_payload(), namespace=NS, seed=1)
+        problems = _normalise(raw_payload(), namespace=NS)
         for problem in problems:
             assert all(iri.startswith(NS) for iri in problem.pos_example)
 
     def test_namespace_change_changes_ids(self):
         """Ids are content-addressed, so a namespace bug is visible."""
-        a = {p.id for p in _normalise(raw_payload(), namespace=NS, seed=1)}
+        a = {p.id for p in _normalise(raw_payload(), namespace=NS)}
         b = {
             p.id
-            for p in _normalise(raw_payload(), namespace="http://other#", seed=1)
+            for p in _normalise(raw_payload(), namespace="http://other#")
         }
         assert a != b
 
