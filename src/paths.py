@@ -56,7 +56,11 @@ class RunPaths:
 
     @property
     def nces_data_dir(self) -> Path:
-        return self.nces_dir / "data"
+        # Knowledge base dir and seed dir have switched.
+        # NCES data is now stored across the directory
+        # of the seed dir so that it can be shared
+        # among different seeds.
+        return self.root.parent.parent / "data"
 
     # Might be obsolete
     @property
@@ -79,7 +83,7 @@ class RunPaths:
 
     @property
     def learning_problems_path(self) -> Path:
-        return self.nces_data_dir / "learning_problems.json"
+        return self.nces_data_dir / "learning_problems_benchmark.json"
 
     @property
     def report_path(self) -> Path:
