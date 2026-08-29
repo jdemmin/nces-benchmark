@@ -159,10 +159,10 @@ The vocabulary for this project's own moving parts.
 - **Entity index mapping** — the mapping from an entity's identifier to its
   row in the embedding matrix.
 
-> **Naming note.** The third-party library is `dicee` (lowercase, as
-> installed from PyPI). This project's module wrapping it is
-> `src/models/dice.py`. Referring to the library, write `dicee`; referring to
-> the module or the model family, write DICE.
+**Naming note.** The third-party library is `dicee` (lowercase, as
+installed from PyPI). This project's module wrapping it is
+`src/models/dice.py`. Referring to the library, write `dicee`; referring to
+the module or the model family, write DICE.
 
 ### Execution units
 
@@ -201,9 +201,14 @@ The vocabulary for this project's own moving parts.
 | `src/data/complexity.py` | Complexity computation: structural measures from DL expressions, hardness measures from the reasoner.|
 | `src/data/ontology.py` | OWL parsing, RDF-triple extraction, individual enumeration, extension computation. |
 | `src/data/lp.py` | Learning-problem generation, the canonical schema, and splitting. |
-| `src/models/dice.py` | DICE dataset preparation, embedding training and search, entity-embedding export, random baseline. |
+| `src/data/results.py` | Contains several class definitions of results that are returned across the benchmark. |
+| `src/models/dice.py` | DICE dataset preparation, embedding training entity-embedding export, random baseline. |
+| `src/models/dice_smac.py` | Hyperparameter search via the SMAC3 framework. Uses a random forest surrogate. |
+| `src/models/dice_grid_search.py` | Hyperparameter search via grid search. |
+| `src/models/hpo_search_utils.py` | Helper class for hyperparameter search. |
 | `src/models/nces.py` | NCES training-data preparation, training, and hypothesis evaluation. |
 | `src/benchmarking/metrics.py` | Extension-based metric calculation and complexity aggregation. |
+| `src/benchmarking/wilcoxon` | Class which performs Wilcoxon signed rank tests on pairs of learning problems and their results. |
 | `src/benchmarking/runner.py` | The **orchestrator**: coordinates every stage across knowledge bases, seeds, and conditions. |
 | `src/__main__.py` | The `nces-benchmark` CLI entry point. |
 
@@ -231,6 +236,12 @@ input.
    compute its extension, and score it against the target extension.
 8. **Result aggregation** — summarize per run, per knowledge base, and per
    suite.
+> `Learning-problem generation`, `Hardness annotation`, and
+> `Learning-problem splitting` are computed once per seed and reused in all
+> consecutive seeds. `Learning-problem generation` and
+> `Learning-problem splitting` are independent of the seeds and use their own
+> which is derived from the hashed values of the corresponding
+> `data_generation_settings.json`.
 
 ### Standard coding terms
 
@@ -300,7 +311,7 @@ refinement_expressivity becomes expressivity, and downsample_refinements becomes
 Every generated learning problem is serialized as:
 
 ```json
-  "id": "lp_0000",
+  "id": "lp_0c6694368bd6",
   "target_concept": "male ⊓ ∃ hasChild.person",
   "pos_example": ["http://example.com/father#stefan"],
   "neg_example": ["http://example.com/father#anna"],
@@ -325,7 +336,7 @@ Every generated learning problem is serialized as:
 - `id` — stable identifier within one benchmark run.
 - `target_concept` — DL-syntax string.
 - `pos_example` / `neg_example` — sorted lists of **full IRIs**.
-- `complexity` — DL-expression length.
+- `complexity` — Multi-dimensional component that aims to quantify how difficult a problem is.
 - `num_pos` / `num_neg` — example counts, derived automatically.
 
 The full set is persisted **grouped by complexity level** in
@@ -338,7 +349,8 @@ Splitting a single problem's examples across train and test would leak the
 target concept into evaluation, and the resulting scores would be
 meaningless. The splits are disjoint by construction and deterministic in the
 seed.
-
+Further, the splits are stratified by a given value of `complexity`. Per
+default this value is `dl_length`.
 ---
 
 ## 6. Metrics and result fields
@@ -419,8 +431,9 @@ Output/
 └── <benchmark_name>/                      e.g. benchmark1
     ├── benchmark_summary.json             aggregate across all knowledge bases
     ├── <knowledge_base>_summary.json      aggregate across seeds, one KB
-    └── seed<N>/
-        └── <knowledge_base>/
+    └── <knowledge_base>/
+        ├── data/                          learning problems and splits
+        └── seed<N>/
             ├── embeddings/
             │   ├── <Model>.csv            trained DICE entity embeddings
             │   ├── <Model>_random.csv     random embedding baseline
@@ -429,7 +442,8 @@ Output/
             │   └── trial_NN_<Model>/      per-trial DICE run directory
             ├── nces/
             │   ├── nces_report.json       the benchmark run report
-            │   ├── data/                  learning problems and splits
+            │   ├── results/               Results that are collected
+            │   │                           within a single run
             │   └── trained_models/
             │       ├── dice/              weights, dice condition
             │       └── random/            weights, random condition
@@ -438,8 +452,8 @@ Output/
 ```
 
 - **`embeddings/data/`** holds the RDF-triple split for DICE.
-- **`nces/data/`** holds `learning_problems.json` (grouped by complexity),
-  the three `*_problems.json` split files, and `nces_train_data.json`.
+- **`/data/`** holds `learning_problems.json`,
+  the two `*_problems.json` split files, and `nces_train_data.json`.
 - **`trained_models/<condition>/`** is separated per condition so the two
   conditions never share weights.
 
@@ -490,11 +504,13 @@ Defaults in `input/embedding_settings.json`, consumed by
 | `eval_model` | `train_val_test` | Evaluate on all three splits. |
 | `num_core` | `0` | CPU-core setting. |
 | `random_seed` | benchmark seed | Passed through per run. |
+| `hpo-backend` | `smac` | which hyperparameter optimization to use |
 
 **Hyperparameter grid.** `search_best_embedding_setting` evaluates the
 cross product of {base dimension, doubled dimension} × {base batch size,
 halved batch size} — four trials at the defaults. The winner is chosen by
-validation MRR, then test MRR.
+validation MRR, then test MRR. This is only relevant when the backend
+does not use `smac`
 
 ### Project
 
@@ -522,6 +538,7 @@ Every flag overrides the corresponding settings file.
 | `--num-problems` | `data_generation.num_rand_samples` |
 | `--dice-epochs` | `embedding.epochs` |
 | `--nces-epochs` | `nces.epochs` |
+| `--hpo-backend` | `embedding.hpo_backend` |
 | `--log-level` | Logging verbosity. |
 
 ---
@@ -586,8 +603,4 @@ Apply these in code, identifiers, log messages, JSON keys, and prose.
 ## 11. Schema versions
 Learning-problem schema v1 — `complexity` is an integer, the DL-expression length.
 v2 — `complexity` is an object; the v1 integer survives as complexity.dl_length.
-
-LearningProblem.from_dict accepts both. An integer complexity is read as {"dl_length": n}
-with all other fields null, so v1 artifacts remain loadable — but they cannot be bucketed
-by the new axes, and reports generated from them will show null in most summary buckets.
-Regenerate rather than migrate where practical.
+v3 — no backwards compatibility for `complexity`. It is a pure multi-dimensional object.
