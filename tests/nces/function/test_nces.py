@@ -822,7 +822,7 @@ class TestEvaluateNCES:
         record = report.learning_problem_results[0]
         assert record.hypothesis == "Guess"
         assert record.target_extension and record.target_extension.positive == 2
-        assert record.target_extension and record.target_extension.negative == 2embedding
+        assert record.target_extension and record.target_extension.negative == 2
         assert record.target_extension and record.target_extension.total == 4
         assert hasattr(record.metrics, "lift")
         assert not record.error
