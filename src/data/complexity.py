@@ -77,6 +77,15 @@ class Hardness:
             redundant=None,
         )
 
+COMPLEXITY_STRATA = frozenset({
+    "dl_length",
+    "depth",
+    "constructors",
+    "num_atomic_classes",
+    "num_roles",
+    "expressivity",
+})
+
 @dataclass(frozen=True)
 class Complexity:
     """Structural and semantic characterisation of a target concept."""
