@@ -41,14 +41,15 @@ def config() -> BenchmarkConfiguration:
 
 def test_run_paths_match_specified_layout(tmp_path: Path) -> None:
     paths = run_paths("benchmark1", 1, "kb1", output_dir=tmp_path)
-    root = tmp_path / "benchmark1" / "seed1" / "kb1"
+    # seed and kb have traded places in current build
+    root = tmp_path / "benchmark1" / "kb1" / "seed1"
 
     assert paths.embeddings_dir == root / "embeddings"
     assert paths.embeddings_data_dir == root / "embeddings" / "data"
     assert paths.nces_dir == root / "nces"
-    # dir has moved to parent parent. Kept as reference
+    # dir has moved to parent. Kept as reference
     # assert paths.nces_data_dir == root / "nces" / "data"
-    assert paths.nces_data_dir == root.parent.parent / "data"
+    assert paths.nces_data_dir == root.parent / "data"
     assert paths.logs_dir == root / "logs"
     assert paths.entity_embeddings_path("Keci", random=False).name == "Keci.csv"
     assert paths.entity_embeddings_path("Keci", random=True).name == "Keci_random.csv"
