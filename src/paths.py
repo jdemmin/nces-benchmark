@@ -60,7 +60,7 @@ class RunPaths:
         # NCES data is now stored across the directory
         # of the seed dir so that it can be shared
         # among different seeds.
-        return self.root.parent.parent / "data"
+        return self.root.parent / "data"
 
     # Might be obsolete
     @property
@@ -119,7 +119,7 @@ def run_paths(
 ) -> RunPaths:
     """Build the :class:`RunPaths` for one benchmark run."""
     base = output_dir or OUTPUT_DIR
-    root = base / benchmark_name / f"seed{seed}" / knowledge_base
+    root = base / benchmark_name / knowledge_base / f"seed{seed}"
     return RunPaths(root=root, knowledge_base=knowledge_base, seed=seed)
 
 

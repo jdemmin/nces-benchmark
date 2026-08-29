@@ -24,7 +24,6 @@ from src.data.complexity import annotate_hardness
 from src.data.lp import (
     LearningProblem,
     generate_learning_problems,
-    load_learning_problems,
     save_split,
     split_learning_problems,
 )
@@ -97,11 +96,12 @@ def run_benchmark(
     updated_benchmark_name = update_false_dir_names(config.project.benchmark_name)
     benchmark_dir = base / Path(updated_benchmark_name)
 
-    reports: dict[str, SingleRunResult] = {}
+    reports: dict[str, dict[str, SingleRunResult]] = {}
     failures: dict[str, KnowledgeBaseFailure] = {}
 
-    for seed in selected_seeds:
-        for kb_name in selected_kbs:
+    # TODO: switched loops. Will make problems downstream.
+    for kb_name in selected_kbs:
+        for seed in selected_seeds:
             logger.info("=== %s | seed %d ===", kb_name, seed)
             try:
                 report = run_single(
@@ -120,9 +120,10 @@ def run_benchmark(
                 )
                 failures[f"{kb_name}_{seed}"] = knowledge_base_failure
                 continue
-            reports[kb_name] = report
+            reports.setdefault(kb_name, {})[str(seed)] = report
             _write_json(payload=holm_adjust_across_complexity_strata(report), path=benchmark_dir / f"{kb_name}_holm_adjusted_{seed}_across_strata.json")
-        _write_json(payload=holm_adjust_across_kbs(reports), path=benchmark_dir / f"KBs_holm_adjusted_{seed}.json")
+            # despite what the methods says, this is actually across seeds
+            _write_json(payload=holm_adjust_across_kbs(reports[kb_name]), path=benchmark_dir / f"KBs_holm_adjusted_{seed}.json")
         # _write_complexity_summary(reports, benchmark_dir, kb_name)
         # _write_embeddings_summary(reports, benchmark_dir, kb_name)
     #_clean_benchmark_dir(benchmark_dir)
@@ -249,7 +250,6 @@ def run_single(
                 stratify_by=config.project.stratify_by,
                 seed=current_data_settings_hash,
             )
-            save_split(split, paths.nces_data_dir)
             len_split_test = len(split["test"])
             len_split_train = len(split["train"])
             logger.info(
@@ -261,7 +261,6 @@ def run_single(
             logger.info("Completed Stage 3: Learning-problem splitting.")
 
             unparsed: list[str] = []
-        
             for key, value in split.items():
                 logger.info(f"Annotating hardness for `{key}` split of size {len(value)}")
                 annotation_result = _stage_hardness_annotation(
@@ -281,14 +280,14 @@ def run_single(
                     ", ".join(unparsed[:5]),
                     ", ..." if len(unparsed) > 5 else "",
                 )
-            problems = split["train"] + split["test"]
-            _save_benchmark_learning_problems(sorted(problems, key=lambda p: p.id), paths.learning_problems_path)
+            # moved here to save the split immediately after hardness annotation.
+            # Less reasoner calls needed if we save the split here immediately.
+            save_split(split, paths.nces_data_dir)
         else:
             logger.info(
                 "Data generation settings have not changed." \
                 "Using cached learning problems and splits."
             )
-            problems = _load_benchmark_learning_problems(paths.learning_problems_path)
             split = _load_split(paths.nces_data_dir)
             logger.info(
                 "Loaded cached learning problems and splits."
