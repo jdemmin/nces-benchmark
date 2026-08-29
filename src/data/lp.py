@@ -154,8 +154,7 @@ def generate_learning_problems(
     kb_path: Path,
     storage_path: Path,
     settings: DataGenerationSettings,
-    *,
-    seed: int,
+    seed: str,
 ) -> list[LearningProblem]:
     """Generate learning problems for one knowledge base.
 
@@ -171,7 +170,7 @@ def generate_learning_problems(
         kwargs["max_num_lps"],
         kb_path.name,
     )
-    LPGen(random_seed=seed, **kwargs).generate()
+    LPGen(**kwargs).generate()
 
     raw_path = storage_path / "LPs.json"
     if not raw_path.is_file():
@@ -181,7 +180,7 @@ def generate_learning_problems(
         raw = json.load(handle)
 
     namespace = _infer_namespace(kb_path)
-    problems = _normalise(raw, namespace=namespace, seed=seed)
+    problems = _normalise(raw, namespace=namespace)
     logger.info("Normalised %d learning problems", len(problems))
     return problems
 
@@ -226,7 +225,7 @@ def _infer_namespace(kb_path: Path) -> str:
 
 
 def _normalise(
-    raw: Iterable[Any], *, namespace: str, seed: int
+    raw: Iterable[Any], *, namespace: str
 ) -> list[LearningProblem]:
     """Convert ontolearn's ``LPs.json`` payload into learning problems."""
 
@@ -334,7 +333,7 @@ def _key_order(k: str) -> tuple[int, float, str]:
 def split_learning_problems(
     problems: Sequence[LearningProblem],
     *,
-    seed: int,
+    seed: str,
     ratios: tuple[float, float] = (0.8, 0.2),
     stratify_by: str | None = "dl_length",
 ) -> dict[str, list[LearningProblem]]:
@@ -411,7 +410,7 @@ def _stable_id(target_concept: str, positives: list[str], negatives: list[str]) 
     return f"lp_{h.hexdigest()[:12]}"
 
 
-def _split_score(seed: int, problem_id: str) -> float:
+def _split_score(seed: str, problem_id: str) -> float:
     """Deterministic per-problem score, independent of all other problems."""
     digest = hashlib.sha256(f"{seed}:{problem_id}".encode()).digest()
     return int.from_bytes(digest[:8], "big") / float(1 << 64)
