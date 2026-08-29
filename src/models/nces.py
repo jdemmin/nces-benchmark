@@ -425,6 +425,10 @@ def _build_records(
                 positive=len(target),
                 negative=len(negative_extension),
             ),
+            hypothesis_extension=TargetExtensionStructure(
+                positive=len(predicted),
+                negative=len(set(all_individuals) - set(predicted)),
+            ),
             metrics=metric_result,
             runtime=runtime,
         )

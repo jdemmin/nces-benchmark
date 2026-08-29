@@ -208,6 +208,7 @@ class LearningProblemResult:
     learning_problem: LearningProblemTruncated
     hypothesis: str = ""
     target_extension: TargetExtensionStructure | None
+    hypothesis_extension: TargetExtensionStructure | None
     metrics: MetricsResult | None
     runtime: float | None
     error: str | None
@@ -216,6 +217,7 @@ class LearningProblemResult:
         self,
         learning_problem: LearningProblem,
         target_extension: TargetExtensionStructure | None = None,
+        hypothesis_extension: TargetExtensionStructure | None = None,
         metrics: MetricsResult | None = None,
         runtime: float | None = None,
         error: str | None = None,
@@ -224,6 +226,7 @@ class LearningProblemResult:
         self.learning_problem = learning_problem.to_truncated()
         self.hypothesis = hypothesis
         self.target_extension = target_extension
+        self.hypothesis_extension = hypothesis_extension
         self.metrics = metrics
         self.runtime = runtime
         self.error = error
@@ -234,6 +237,8 @@ class LearningProblemResult:
         hypothesis = data.get("hypothesis", "")
         target_extension_data = data.get("target_extension")
         target_extension = TargetExtensionStructure.from_dict(target_extension_data) if target_extension_data else None
+        hypothesis_extension_data = data.get("hypothesis_extension")
+        hypothesis_extension = TargetExtensionStructure.from_dict(hypothesis_extension_data) if hypothesis_extension_data else None
         metrics_data = data.get("metrics")
         metrics = MetricsResult.from_dict(metrics_data) if metrics_data else None
         runtime = data.get("runtime")
@@ -243,9 +248,10 @@ class LearningProblemResult:
             learning_problem=learning_problem,
             hypothesis=hypothesis,
             target_extension=target_extension,
+            hypothesis_extension=hypothesis_extension,
             metrics=metrics,
             runtime=runtime,
-            error=error
+            error=error,
         )
 
     
@@ -255,6 +261,8 @@ class LearningProblemResult:
             "hypothesis": self.hypothesis,
             "target_extension": TargetExtensionStructure.to_dict(self.target_extension)
                 if self.target_extension else None,
+            "hypothesis_extension": TargetExtensionStructure.to_dict(self.hypothesis_extension)
+                if self.hypothesis_extension else None,
             "metrics": MetricsResult.to_dict(self.metrics)
                 if self.metrics else None,
             "error": self.error,
