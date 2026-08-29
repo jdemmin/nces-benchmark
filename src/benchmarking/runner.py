@@ -10,7 +10,15 @@ from typing import Any
 
 from ontolearn.knowledge_base import KnowledgeBase
 
-from src.benchmarking.metrics import get_complexity_summary, mean_embeddings_results
+from src.benchmarking.metrics import (
+    build_complexity_strata,
+    get_complexity_summary,
+    mean_embeddings_results,
+)
+from src.benchmarking.wilcoxon import (
+    holm_adjust_across_complexity_strata,
+    holm_adjust_across_kbs,
+)
 from src.config import BenchmarkConfiguration
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
@@ -88,14 +96,12 @@ def run_benchmark(
     updated_benchmark_name = update_false_dir_names(config.project.benchmark_name)
     benchmark_dir = base / Path(updated_benchmark_name)
 
-    reports: list[SingleRunResult] = []
-    failures: list[KnowledgeBaseFailure] = []
+    reports: dict[str, SingleRunResult] = {}
+    failures: dict[str, KnowledgeBaseFailure] = {}
 
-    for kb_name in selected_kbs:
-        for seed in selected_seeds:
+    for seed in selected_seeds:
+        for kb_name in selected_kbs:
             logger.info("=== %s | seed %d ===", kb_name, seed)
-            # set the random seed for reproducibility for every environment that uses
-            # randomness, including LPGen, Ontolearn, NumPy, and PyTorch
             try:
                 report = run_single(
                     kb_name,
@@ -111,61 +117,76 @@ def run_benchmark(
                     seed=seed,
                     error_message=str(error),
                 )
-                failures.append(knowledge_base_failure)
+                failures[f"{kb_name}_{seed}"] = knowledge_base_failure
                 continue
-            reports.append(report)
-        complexity_summary = get_complexity_summary([
-            # flattens list of lists of LearningProblemResults into a single list
-            item for sublist in [
-                r.random_embedding_result.learning_problem_results
-                for r in reports if r.random_embedding_result is not None
-            ]
-            for item in sublist
-        ])
-        _write_json(
-            payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
-            path=benchmark_dir / f"{kb_name}_mean_across_seeds_random_complexity_summary.json",
-        )
-        complexity_summary = get_complexity_summary([
-            # flattens list of lists of LearningProblemResults into a single list
-            item for sublist in [
-                r.dice_embedding_result.learning_problem_results
-                for r in reports if r.dice_embedding_result is not None
-            ]
-            for item in sublist
-        ])
-        _write_json(
-            payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
-            path=benchmark_dir / f"{kb_name}_mean_across_seeds_dice_complexity_summary.json",
-        )
-        random_mean = mean_embeddings_results(
-            [r.random_embedding_result for r in reports if r.random_embedding_result is not None]
-        )
-        dice_mean = mean_embeddings_results(
-            [r.dice_embedding_result for r in reports if r.dice_embedding_result is not None]
-        )
-        knowledge_base_result = KnowledgeBaseResult(
-            knowledge_base=kb_name,
-            mean_random_metrics=random_mean,
-            mean_dice_metrics=dice_mean,
-        )
-        _write_json(
-            payload=knowledge_base_result.to_dict(),
-            path=benchmark_dir / f"{kb_name}_mean_across_seeds.json",
-        )
+            reports[kb_name] = report
+            _write_json(payload=holm_adjust_across_complexity_strata(report), path=benchmark_dir / f"{kb_name}_holm_adjusted_{seed}_across_strata.json")
+        _write_json(payload=holm_adjust_across_kbs(reports), path=benchmark_dir / f"KBs_holm_adjusted_{seed}.json")
+        # _write_complexity_summary(reports, benchmark_dir, kb_name)
+        # _write_embeddings_summary(reports, benchmark_dir, kb_name)
+    #_clean_benchmark_dir(benchmark_dir)
     summary = {
         "num_runs": len(reports),
         "failures": failures,
     }
     _write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
+
+    return summary
+
+
+def _clean_benchmark_dir(benchmark_dir: Path):
     logger.info("Proceeding to zip the benchmark results directory %s", benchmark_dir)
     import shutil
     shutil.make_archive(str(benchmark_dir), 'zip', str(benchmark_dir))
     logger.info("Completed zipping the benchmark results directory %s", benchmark_dir)
-    # logger.info("Proceeding to remove the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
-    # shutil.rmtree(benchmark_dir)
-    # logger.info("Completed removal of the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
-    return summary
+    logger.info("Proceeding to remove the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
+    shutil.rmtree(benchmark_dir)
+    logger.info("Completed removal of the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
+
+
+def _write_embeddings_summary(reports: dict[str, SingleRunResult], benchmark_dir: Path, kb_name: str):
+    random_mean = mean_embeddings_results(
+        [r.random_embedding_result for r in reports.values() if r.random_embedding_result is not None]
+    )
+    dice_mean = mean_embeddings_results(
+        [r.dice_embedding_result for r in reports.values() if r.dice_embedding_result is not None]
+    )
+    knowledge_base_result = KnowledgeBaseResult(
+        knowledge_base=kb_name,
+        mean_random_metrics=random_mean,
+        mean_dice_metrics=dice_mean,
+    )
+    _write_json(
+        payload=knowledge_base_result.to_dict(),
+        path=benchmark_dir / f"{kb_name}_mean_across_seeds.json",
+    )
+
+
+def _write_complexity_summary(reports: dict[str, SingleRunResult], benchmark_dir: Path, kb_name: str):
+    complexity_summary = get_complexity_summary([
+        # flattens list of lists of LearningProblemResults into a single list
+        item for sublist in [
+            r.random_embedding_result.learning_problem_results
+            for r in reports.values() if r.random_embedding_result is not None
+        ]
+        for item in sublist
+    ])
+    _write_json(
+        payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
+        path=benchmark_dir / f"{kb_name}_mean_across_seeds_random_complexity_summary.json",
+    )
+    complexity_summary = get_complexity_summary([
+        # flattens list of lists of LearningProblemResults into a single list
+        item for sublist in [
+            r.dice_embedding_result.learning_problem_results
+            for r in reports.values() if r.dice_embedding_result is not None
+        ]
+        for item in sublist
+    ])
+    _write_json(
+        payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
+        path=benchmark_dir / f"{kb_name}_mean_across_seeds_dice_complexity_summary.json",
+    )
 
 
 def run_single(
@@ -189,7 +210,6 @@ def run_single(
     handler = configure_logging(paths.logs_dir / f"{knowledge_base_name}_{seed}.log")
     started = time.perf_counter()
     try:
-        # might be non deterministic
         ontology_parse_result = _stage_parse_ontology(kb_path, seed=seed)
         knowledge_base = ontology_parse_result.knowledge_base
         logger.info("Completed Stage 1: Ontology parsing.")
@@ -270,6 +290,7 @@ def run_single(
             "Completed Stage 6: NCES training and evaluation for all conditions."
         )
         single_run_result.set_runtime(round(time.perf_counter() - started, 3))
+        # Write single-run result to JSON. Complexity summaries will be written separately.
         _write_json(
             payload=single_run_result.to_dict(),
             path=paths.nces_results_dir / "single_run_result.json",
@@ -296,8 +317,8 @@ def run_single(
             paths.nces_results_dir / "dice_complexity_summary.json",
             paths.nces_results_dir / "random_complexity_summary.json",
         )
-        single_run_result.random_complexity_summary = random_complexity_summary
-        single_run_result.dice_complexity_summary = dice_complexity_summary
+        single_run_result.random_complexity_aggregates = build_complexity_strata(random_complexity_summary)
+        single_run_result.dice_complexity_aggregates = build_complexity_strata(dice_complexity_summary)
         atomic_extensions = compute_atomic_class_extensions(knowledge_base)
         knowledge_base_stats = KnowledgeBaseStats(
             knowledge_base_name=knowledge_base_name,
@@ -353,41 +374,6 @@ def _convert_complexity_summary_to_dict(
     }
 
 
-# def _log_complexity_distribution(problems: Sequence[LearningProblem]) -> None:
-#     """Log the spread along each complexity axis.
-
-#     Thin strata make stratified splitting degenerate -- a stratum of one or
-#     two problems is handed entirely to train -- so this is the signal for
-#     whether the configured ``stratify_by`` axis is viable.
-#     """
-
-#     axes: dict[str, dict[str, int]] = {
-#         "dl_length": {},
-#         "depth": {},
-#         "expressivity": {},
-#         "redundant": {},
-#     }
-#     for problem in problems:
-#         for axis, counts in axes.items():
-#             try:
-#                 key = str(getattr(problem.complexity, axis))
-#             except AttributeError:
-#                 key = str(getattr(problem.complexity.hardness, axis))
-#             counts[key] = counts.get(key, 0) + 1
-
-#     for axis, counts in axes.items():
-#         rendered = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
-#         logger.info("Complexity distribution by %s: %s", axis, rendered)
-#         thin = [k for k, v in counts.items() if v < 3]
-#         if thin and axis != "redundant":
-#             logger.warning(
-#                 "Axis %r has strata with fewer than 3 learning problems (%s); "
-#                 "stratifying on it will starve the test split",
-#                 axis,
-#                 ", ".join(sorted(thin)),
-#             )
-
-
 def _order_embedding_conditions(embedding_conditions: list[str]) -> None:
     """Ensure that 'random' is always the last embedding condition."""
 
@@ -422,7 +408,7 @@ def _embedding_stage(
             embedding_settings=benchmark_settings.embedding,
             seed=seed,
             embedding_conditions=benchmark_settings.project.embedding_conditions,
-            expected_dim=benchmark_settings.nces.embedding_dim,
+            nces_embedding_dim=benchmark_settings.nces.embedding_dim,
         )
     return report, m
 
@@ -518,6 +504,7 @@ def _stage_train_eval_nces(
         # location where the trained model will be saved
         # and parent directory where the evaluation will read from
         trained_model_path = paths.nces_suffix_dir(condition)
+        embedding_dim = config.nces.embedding_dim if condition == "random" else m
         logger.info(
             "Starting NCES training for condition '%s'" \
             "with embeddings from '%s'",
@@ -530,7 +517,7 @@ def _stage_train_eval_nces(
             trained_models_dir=trained_model_path,
             train_data=train_data,
             settings=config.nces,
-            m=m,
+            m=embedding_dim,
             seed=seed,
         )
         _write_json(
@@ -557,7 +544,7 @@ def _stage_train_eval_nces(
             all_individuals=all_individuals,
             target_extensions=target_extensions,
             split_name="test",
-            m=m,
+            m=embedding_dim,
             trained_model_settings=embedding_report[condition].embedding_settings,
             seed=seed,
             degraded=training.degraded,
