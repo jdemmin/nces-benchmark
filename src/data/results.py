@@ -551,6 +551,44 @@ class OntologyParseResult:
     all_individuals: list[str]
     triples: list[Triple]
 
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Knowledge base is omitted from the dictionary representation because it may contain
+        complex objects not easily serializable to JSON.
+        """
+        return {
+            "all_individuals": self.all_individuals,
+            "triples": [triple.as_tuple() for triple in self.triples]
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, knowledge_base: KnowledgeBase) -> "OntologyParseResult":
+        all_individuals = data.get("all_individuals", [])
+        triples_data = data.get("triples", [])
+        triples = [Triple(*triple) for triple in triples_data]
+        return cls(
+            knowledge_base=knowledge_base,  # Knowledge base is omitted in the dictionary representation
+            all_individuals=all_individuals,
+            triples=triples
+        )
+
+@dataclass(frozen=True)
+class OntologyPhaseResult:
+    ontology_parse_result: OntologyParseResult
+    counts: dict[str, int]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ontology_parse_result": self.ontology_parse_result.to_dict()
+                if self.ontology_parse_result else None,
+            "counts": self.counts
+        }
+
+@dataclass(frozen=True)
+class LearningProblemPhaseResult:
+    target_extensions: dict[str, frozenset[str]]
+    split: dict[str, list[LearningProblem]]
+
 
 @dataclass(frozen=True)
 class HardnessAnnotationResult:

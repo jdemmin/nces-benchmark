@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from collections.abc import Sequence
+from os import makedirs
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ from src.benchmarking.metrics import (
     get_complexity_summary,
     mean_embeddings_results,
 )
-from src.config import BenchmarkConfiguration, DataGenerationSettings
+from src.config import BenchmarkConfiguration, DataGenerationSettings, _read_json
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
     LearningProblem,
@@ -25,6 +26,7 @@ from src.data.lp import (
     split_learning_problems,
 )
 from src.data.ontology import (
+    Triple,
     compute_atomic_class_extensions,
     concept_extension,
     individual_iris,
@@ -37,12 +39,20 @@ from src.data.results import (
     KnowledgeBaseFailure,
     KnowledgeBaseResult,
     KnowledgeBaseStats,
+    LearningProblemPhaseResult,
     MeanMetricsResult,
     OntologyParseResult,
+    OntologyPhaseResult,
     SingleRunResult,
 )
 from src.logging_utils import configure_logging
-from src.models.dice import EmbeddingResultDice, build_embeddings
+from src.models.dice import (
+    EmbeddingResultDice,
+    build_embeddings,
+    count_partitions,
+    split_dicee_dataset,
+    stage_partition,
+)
 from src.models.nces import (
     evaluate_nces,
     prepare_nces_training_data,
@@ -96,7 +106,6 @@ def run_benchmark(
     reports: dict[str, dict[int, SingleRunResult]] = {}
     failures: dict[str, KnowledgeBaseFailure] = {}
 
-    # TODO: switched loops. Will make problems downstream.
     for kb_name in selected_kbs:
         for seed in selected_seeds:
             logger.info("=== %s | seed %d ===", kb_name, seed)
@@ -118,11 +127,6 @@ def run_benchmark(
                 failures[f"{kb_name}_{seed}"] = knowledge_base_failure
                 continue
             reports.setdefault(kb_name, {})[seed] = report
-            #_write_json(payload=holm_adjust_across_complexity_strata(report), path=benchmark_dir / f"{kb_name}_holm_adjusted_{seed}_across_strata.json")
-            # despite what the methods says, this is actually across seeds
-            #_write_json(payload=holm_adjust_across_kbs(reports[kb_name]), path=benchmark_dir / f"KBs_holm_adjusted_{seed}.json")
-        # _write_complexity_summary(reports, benchmark_dir, kb_name)
-        # _write_embeddings_summary(reports, benchmark_dir, kb_name)
     write_evaluation(evaluate_suite(reports), benchmark_dir / "suite_evaluation.json")
     
     summary = {
@@ -134,14 +138,15 @@ def run_benchmark(
     return summary
 
 
-def _clean_benchmark_dir(benchmark_dir: Path):
-    logger.info("Proceeding to zip the benchmark results directory %s", benchmark_dir)
+def _clean_dir(path: Path, make_zip: bool = False):
     import shutil
-    shutil.make_archive(str(benchmark_dir), 'zip', str(benchmark_dir))
-    logger.info("Completed zipping the benchmark results directory %s", benchmark_dir)
-    logger.info("Proceeding to remove the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
-    shutil.rmtree(benchmark_dir)
-    logger.info("Completed removal of the benchmark results directory %s. Excluding the zip archive.", benchmark_dir)
+    if make_zip:
+        logger.info("Proceeding to zip the directory %s", path)
+        shutil.make_archive(str(path), 'zip', str(path))
+        logger.info("Completed zipping the directory %s", path)
+    logger.info("Proceeding to remove the directory %s. Excluding the zip archive.", path)
+    shutil.rmtree(path)
+    logger.info("Completed removal of the directory %s. Excluding the zip archive.", path)
 
 
 def _write_embeddings_summary(reports: dict[str, SingleRunResult], benchmark_dir: Path, kb_name: str):
@@ -210,103 +215,48 @@ def run_single(
     handler = configure_logging(paths.logs_dir / f"{knowledge_base_name}_{seed}.log")
     started = time.perf_counter()
     try:
-        ontology_parse_result = _stage_parse_ontology(kb_path, seed=seed)
-        knowledge_base = ontology_parse_result.knowledge_base
-        logger.info("Completed Stage 1: Ontology parsing.")
-
-        problems: list[LearningProblem] = []
-        split: dict[str, list[LearningProblem]] = {"train": [], "test": []}
-        target_extensions: dict[str, frozenset[str]] = {}
-
+        ontology_parse_result: OntologyParseResult
+        counts: dict[str, int]
+        
         current_data_settings_hash = _hash_data_generation_settings(config.data_generation)
         old_data_settings_hash = _read_data_generation_settings_hash(paths.nces_data_dir)
-
-        hash_file_path = paths.nces_data_dir / "data_generation_settings_hash.txt"
-        if old_data_settings_hash is None or old_data_settings_hash != current_data_settings_hash:
-            import os
-
-            logger.info("Data generation settings have changed. Updating hash file at %s", hash_file_path)
-            if os.path.exists(hash_file_path):
-                os.remove(hash_file_path)
-            if os.path.exists(paths.learning_problems_path):
-                os.remove(paths.learning_problems_path)
-            with open(hash_file_path, "x", encoding="utf-8") as f:
-                f.write(current_data_settings_hash)
-            problems = generate_learning_problems(
-                kb_path,
-                paths.nces_data_dir,
-                config.data_generation,
-                seed=current_data_settings_hash,
-            )
-            logger.info("Completed Stage 2: Learning-problem generation for %d problems.", len(problems))
-            if not problems:
-                raise RuntimeError(
-                    f"No non-degenerate learning problems generated for {knowledge_base_name}."
-                )
-            split = split_learning_problems(
-                problems,
-                stratify_by=config.project.stratify_by,
-                seed=current_data_settings_hash,
-            )
-            len_split_test = len(split["test"])
-            len_split_train = len(split["train"])
-            logger.info(
-                "Split %d learning problems into %d train / %d test",
-                len_split_train + len_split_test,
-                len_split_train,
-                len_split_test,
-            )
-            logger.info("Completed Stage 3: Learning-problem splitting.")
-
-            unparsed: list[str] = []
-            for key, value in split.items():
-                logger.info(f"Annotating hardness for `{key}` split of size {len(value)}")
-                annotation_result = _stage_hardness_annotation(
-                    value, knowledge_base, ontology_parse_result.all_individuals
-                )
-                split[key] = annotation_result.annotated_problems
-                unparsed.extend(annotation_result.unparsed_problems)
-                target_extensions.update(annotation_result.target_extensions)
-            logger.info("Completed Stage 4: Hardness annotation for %d learning problems", len_split_train + len_split_test)
-
-            if unparsed:
-                logger.warning(
-                    "%d of %d target concepts could not be parsed; used sampled "
-                    "positives as their extension (ids: %s%s)",
-                    len(unparsed),
-                    len(problems),
-                    ", ".join(unparsed[:5]),
-                    ", ..." if len(unparsed) > 5 else "",
-                )
-            # moved here to save the split immediately after hardness annotation.
-            # Less reasoner calls needed if we save the split here immediately.
-            save_split(split, paths.nces_data_dir)
-        else:
-            logger.info(
-                "Data generation settings have not changed." \
-                "Using cached learning problems and splits."
-            )
-            split = _load_split(paths.nces_data_dir)
-            logger.info(
-                "Loaded cached learning problems and splits."
-            )
-            logger.info("Starting Stage 5: Embedding generation.")
-        
+        ontology_phase_result = _ontology_phase(
+            old_data_settings_hash=old_data_settings_hash,
+            kb_path=kb_path,
+            knowledge_base_name=knowledge_base_name,
+            paths=paths,
+        )
+        ontology_parse_result = ontology_phase_result.ontology_parse_result
+        counts = ontology_phase_result.counts
+        logger.info("Starting Stage 2: Embedding generation.")
         embedding_report, m = _embedding_stage(
             paths=paths,
             kb_path=kb_path,
             benchmark_settings=config,
             seed=seed,
+            triples=ontology_parse_result.triples,
+            counts=counts,
         )
         logger.info(
-            "Completed Stage 5: Embedding generation for" \
+            "Completed Stage 2: Embedding generation for" \
             "all conditions and collected results."
         )
+        learning_problem_phase_result = _gather_learning_problems_phase(
+            paths=paths,
+            kb_path=kb_path,
+            ontology_parse_result=ontology_parse_result,
+            config=config,
+            old_data_settings_hash=old_data_settings_hash,
+            current_data_settings_hash=current_data_settings_hash,
+            knowledge_base_name=knowledge_base_name,
+        )
+        split = learning_problem_phase_result.split
+        target_extensions = learning_problem_phase_result.target_extensions
         single_run_result = _stage_train_eval_nces(
             split=split,
             paths=paths,
             kb_path=kb_path,
-            knowledge_base=knowledge_base,
+            knowledge_base=ontology_parse_result.knowledge_base,
             all_individuals=ontology_parse_result.all_individuals,
             target_extensions=target_extensions,
             embedding_report=embedding_report,
@@ -347,7 +297,7 @@ def run_single(
         )
         single_run_result.random_complexity_aggregates = build_complexity_strata(random_complexity_summary)
         single_run_result.dice_complexity_aggregates = build_complexity_strata(dice_complexity_summary)
-        atomic_extensions = compute_atomic_class_extensions(knowledge_base)
+        atomic_extensions = compute_atomic_class_extensions(ontology_parse_result.knowledge_base)
         knowledge_base_stats = KnowledgeBaseStats(
             knowledge_base_name=knowledge_base_name,
             number_of_individuals=len(ontology_parse_result.all_individuals),
@@ -363,25 +313,140 @@ def run_single(
             paths.seed_dir / f"knowledge_base_stats_{seed}.json",
         )
         _remove_trials(path=paths.embeddings_dir)
-        _clean_benchmark_dir(paths.seed_dir)
+        _clean_dir(path=paths.seed_dir, make_zip=True)
         return single_run_result 
     finally:
         if handler is not None:
             logging.getLogger().removeHandler(handler)
             handler.close()
-        
 
-def _save_benchmark_learning_problems(problems: list[LearningProblem], path: Path) -> None:
-    """Save the benchmark learning problems to the specified path."""
-    with open(path, "w") as f:
-        json.dump([problem.to_dict() for problem in problems], f, indent=4)
 
-def _load_benchmark_learning_problems(path: Path) -> list[LearningProblem]:
-    """Load the benchmark learning problems from the specified path."""
-    if not path.exists():
-        return []
-    with open(path, "r") as f:
-        return [LearningProblem.from_dict(d) for d in json.load(f)]
+def _gather_learning_problems_phase(
+    paths: RunPaths, 
+    old_data_settings_hash: str | None, 
+    current_data_settings_hash: str, 
+    kb_path: Path, knowledge_base_name: str, 
+    ontology_parse_result: OntologyParseResult, 
+    config: BenchmarkConfiguration,
+    ) -> LearningProblemPhaseResult:
+
+    hash_file_path = paths.nces_data_dir / "data_generation_settings_hash.txt"
+    if old_data_settings_hash is not None and old_data_settings_hash == current_data_settings_hash:
+        logger.info(
+            "Data generation settings have not changed." \
+            "Using cached learning problems and splits."
+        )
+        split = _load_split(paths.nces_data_dir)
+        target_extensions = _read_json(paths.nces_data_dir / "target_extensions.json")
+        with open(paths.nces_data_dir / "unparsed.json", "r") as f:
+            unparsed = json.load(f)
+        logger.info(
+            "Loaded cached learning problems and splits."
+        )
+    else:
+        logger.warning(
+            f"Current data generation settings do not reflect the previous settings."
+            f"Updating hash file at {hash_file_path}.")
+        _clean_dir(path=paths.nces_data_dir, make_zip=False)
+        makedirs(paths.nces_data_dir, exist_ok=True)
+        with open(hash_file_path, "x", encoding="utf-8") as f:
+            f.write(current_data_settings_hash)
+        problems = generate_learning_problems(
+            kb_path,
+            paths.nces_data_dir,
+            config.data_generation,
+            seed=current_data_settings_hash,
+        )
+        logger.info("Completed Stage 3: Learning-problem generation for %d problems.", len(problems))
+        if not problems:
+            raise RuntimeError(
+                f"No non-degenerate learning problems generated for {knowledge_base_name}."
+            )
+        split = split_learning_problems(
+            problems,
+            stratify_by=config.project.stratify_by,
+            seed=current_data_settings_hash,
+        )
+        len_split_test = len(split["test"])
+        len_split_train = len(split["train"])
+        logger.info(
+            "Split %d learning problems into %d train / %d test",
+            len_split_train + len_split_test,
+            len_split_train,
+            len_split_test,
+        )
+        logger.info("Completed Stage 4: Learning-problem splitting.")
+        knowledge_base = ontology_parse_result.knowledge_base
+        unparsed: list[str] = []
+        target_extensions: dict[str, frozenset[str]] = {}
+        for key, value in split.items():
+            logger.info(f"Annotating hardness for `{key}` split of size {len(value)}")
+            annotation_result = _stage_hardness_annotation(
+                value, knowledge_base, ontology_parse_result.all_individuals
+            )
+            split[key] = annotation_result.annotated_problems
+            unparsed.extend(annotation_result.unparsed_problems)
+            target_extensions.update(annotation_result.target_extensions)
+        logger.info("Completed Stage 5: Hardness annotation for %d learning problems", len_split_train + len_split_test)
+        if unparsed:
+            logger.warning(
+                "%d of %d target concepts could not be parsed; used sampled "
+                "positives as their extension (ids: %s%s)",
+                len(unparsed),
+                len(problems),
+                ", ".join(unparsed[:5]),
+                ", ..." if len(unparsed) > 5 else "",
+            )
+        # moved here to save the split immediately after hardness annotation.
+        # Less reasoner calls needed if we save the split here immediately.
+        save_split(split, paths.nces_data_dir)
+        _write_json(
+            payload=target_extensions,
+            path=paths.nces_data_dir / "target_extensions.json"
+        )
+        with open(paths.nces_data_dir / "unparsed.json", "w") as f:
+            json.dump(unparsed, f, indent=4)
+    return LearningProblemPhaseResult(
+        target_extensions=target_extensions,
+        split=split,
+    )
+
+
+def _ontology_phase(old_data_settings_hash: str | None, kb_path: Path, knowledge_base_name: str, paths: RunPaths) -> OntologyPhaseResult:
+    # if old data is not none we can assume that the ontology has already been parsed
+    if old_data_settings_hash is None:
+        logger.info("No previous data generation settings hash found")
+        ontology_parse_result = _parse_ontology(kb_path)
+        _write_json(
+            payload=ontology_parse_result.to_dict(), 
+            path=paths.ontology_parse_data_dir / "ontology_parse_result.json"
+        )
+        split_triple = split_dicee_dataset(
+            directory=paths.embeddings_data_dir,
+            triples=ontology_parse_result.triples
+        )
+        stage_partition(
+            directory=paths.embeddings_data_dir,
+            partitions=split_triple
+            )
+        logger.info("Completed Stage 1: Ontology parsing.")
+    else:
+        ontology_parse_result = OntologyParseResult.from_dict(
+            _read_json(paths.ontology_parse_data_dir / "ontology_parse_result.json"),
+            knowledge_base=load_knowledge_base(resolve_knowledge_base(knowledge_base_name))
+        )
+        split_triple = split_dicee_dataset(
+            directory=paths.embeddings_data_dir,
+            triples=ontology_parse_result.triples
+        )
+    counts = count_partitions(
+        partitions=split_triple
+    )
+    return OntologyPhaseResult(
+        ontology_parse_result=ontology_parse_result,
+        counts=counts
+    )
+
 
 def _load_split(path: Path) -> dict[str, list[LearningProblem]]:
     """Load the data split from the specified directory."""
@@ -474,6 +539,8 @@ def _embedding_stage(
         kb_path: Path,
         benchmark_settings: BenchmarkConfiguration,
         seed: int,
+        triples: list[Triple],
+        counts: dict[str, int],
     ) -> tuple[dict[str, EmbeddingResultDice], int]:
     """
     Run the embedding stage and return the report.
@@ -487,6 +554,8 @@ def _embedding_stage(
             seed=seed,
             embedding_conditions=benchmark_settings.project.embedding_conditions,
             nces_embedding_dim=benchmark_settings.nces.embedding_dim,
+            triples=triples,
+            counts=counts,
         )
     return report, m
 
@@ -498,10 +567,10 @@ def _write_json(payload: dict[str, Any], path: Path) -> None:
     logger.info("Wrote %s", path)
 
 
-def _stage_parse_ontology(kb_path: Path, seed: int) -> OntologyParseResult:
+def _parse_ontology(kb_path: Path) -> OntologyParseResult:
     """Parse the ontology and return triples and individual IRIs."""
 
-    triples = parse_triples(kb_path, seed=seed)
+    triples = parse_triples(kb_path)
     knowledge_base = load_knowledge_base(kb_path)
     all_individuals = individual_iris(knowledge_base)
     return OntologyParseResult(

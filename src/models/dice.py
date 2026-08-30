@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from src.config import SPLIT_RATIOS, EmbeddingSettings
-from src.data.ontology import Triple, local_name, parse_triples
+from src.data.ontology import Triple, local_name
 from src.models.hpo_search_utils import selection_score
 from src.random_utils import seed_everything
 
@@ -99,19 +99,18 @@ def _count_lines(path: Path) -> int:
     with path.open(encoding="utf-8") as handle:
         return sum(1 for _ in handle)
 
-def write_dicee_dataset(
-    triples: Sequence[Triple],
-    directory: Path,
-    *,
-    seed: int,
-    ratios: tuple[float, float, float] = SPLIT_RATIOS,
+def count_partitions(
+    partitions: dict[str, list[tuple[str, str, str]]],
 ) -> dict[str, int]:
-    """Write ``train.txt``/``valid.txt``/``test.txt`` for ``dicee``.
+    counts = {name: len(rows) for name, rows in partitions.items()}
+    return counts
 
-    DICE consumes tab-separated triple files from a dataset directory. The
-    split is deterministic in ``seed`` so a benchmark run is reproducible.
-    """
-
+def split_dicee_dataset(
+    directory: Path,
+    triples: Sequence[Triple],
+    ratios: tuple[float, float, float] = SPLIT_RATIOS,
+) -> dict[str, list[tuple[str, str, str]]]:
+    """Split an existing DICE dataset into train/valid/test according to the given ratios."""
     if not triples:
         raise ValueError("Cannot build a DICE dataset from zero triples.")
 
@@ -119,34 +118,37 @@ def write_dicee_dataset(
     _assert_dicee_safe_dataset_dir(directory)
 
     directory.mkdir(parents=True, exist_ok=True)
-    shuffled = [triple.as_tuple() for triple in triples]
+    sorted_tuple = [triple.as_tuple() for triple in triples]
     # random.Random(seed).shuffle(shuffled)
 
-    total = len(shuffled)
+    total = len(sorted_tuple)
     n_train = max(1, int(total * ratios[0]))
     n_valid = int(total * ratios[1])
     if n_train + n_valid >= total:
         n_valid = max(0, total - n_train - 1)
 
     partitions = {
-        "train": shuffled[:n_train],
-        "valid": shuffled[n_train : n_train + n_valid],
-        "test": shuffled[n_train + n_valid :],
+        "train": sorted_tuple[:n_train],
+        "valid": sorted_tuple[n_train : n_train + n_valid],
+        "test": sorted_tuple[n_train + n_valid :],
     }
     # DICE requires non-empty validation/test files when eval_model spans them.
     for name in ("valid", "test"):
         if not partitions[name]:
             partitions[name] = partitions["train"][:1]
 
-    for name, rows in partitions.items():
-        path = directory / f"{name}.txt"
-        with path.open("w", encoding="utf-8") as handle:
-            for subject, predicate, obj in rows:
-                handle.write(f"{subject}\t{predicate}\t{obj}\n")
+    logger.info("Split DICE dataset in %s.", directory)
+    return partitions
 
-    counts = {name: len(rows) for name, rows in partitions.items()}
-    logger.info("Wrote DICE dataset to %s (%s)", directory, counts)
-    return counts
+def stage_partition(
+    directory: Path,
+    partitions: dict[str, list[tuple[str, str, str]]],
+):
+    for name, rows in partitions.items():
+            path = directory / f"{name}.txt"
+            with path.open("w", encoding="utf-8") as handle:
+                for subject, predicate, obj in rows:
+                    handle.write(f"{subject}\t{predicate}\t{obj}\n")
 
 
 def train_embedding_model(
@@ -332,6 +334,8 @@ def build_embeddings(
     seed: int,
     embedding_conditions: Sequence[str],
     nces_embedding_dim: int,
+    triples: list[Triple],
+    counts: dict[str, int],
 ) -> tuple[dict[str, EmbeddingResultDice], int]:
     """Run the full embedding stage for every requested condition.
 
@@ -340,9 +344,6 @@ def build_embeddings(
     vocabulary and the selected dimensionality but never trains.
     """
     
-    triples = parse_triples(kb_path, seed=seed)
-    counts = write_dicee_dataset(triples, data_dir, seed=seed)
-
     entity_names = sorted(
         {triple.subject for triple in triples} | {triple.object for triple in triples}
     )
