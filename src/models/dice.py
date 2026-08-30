@@ -89,11 +89,15 @@ def stage_dicee_dataset(data_dir: Path, staging_root: Path) -> Path:
         "Staged DICE dataset from %s to %s (train=%d, valid=%d, test=%d)",
         data_dir,
         staged,
-        len(list((data_dir / "train.txt").open())),
-        len(list((data_dir / "valid.txt").open())),
-        len(list((data_dir / "test.txt").open())),
+        _count_lines(data_dir / "train.txt"),
+        _count_lines(data_dir / "valid.txt"),
+        _count_lines(data_dir / "test.txt"),
     )
     return staged
+
+def _count_lines(path: Path) -> int:
+    with path.open(encoding="utf-8") as handle:
+        return sum(1 for _ in handle)
 
 def write_dicee_dataset(
     triples: Sequence[Triple],

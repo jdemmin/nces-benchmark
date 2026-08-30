@@ -205,7 +205,12 @@ def run_smac_search(
         _write_trial_record(embeddings_dir, record["trial"], record)
         trials.append(record)
         error_text = str(record.get("error", "")).lower()
-        if "no space left on device" in error_text or "shared memory" in error_text:
+        fatal_host_errors = (
+            "no space left on device",
+            "shared memory",
+            "too many open files",
+        )
+        if any(token in error_text for token in fatal_host_errors):
             logger.error(
                 "SMAC trial %d failed with a shared-memory error: %s",
                 record["trial"],
@@ -228,10 +233,7 @@ def run_smac_search(
     
     def target_function(config: Configuration, seed: int = 0) -> float:
         if aborted["reason"] is not None:
-            # Budget cannot be cancelled mid-run; make the remaining trials
-            # free instead of training on a known-broken dataset.
-            # Leads to funky 62 NOPs
-            return CRASH_COST
+            raise SearchAborted(aborted["reason"])
         index = counter["index"]
         counter["index"] += 1
 
@@ -376,7 +378,9 @@ def run_smac_search(
     # Recover the trial records from disk, because SMAC's runhistory is not
     # process-safe and may have been lost if the target function ran in a
     # subprocess (n_workers > 1 or trial_walltime_limit forcing pynisher).
-    trials = _load_trial_records(embeddings_dir)
+    persisted = _load_trial_records(embeddings_dir)
+    if len(persisted) >= len(trials):
+        trials = persisted
     logger.info("SMAC search completed: %d trials recorded", len(trials))
     if not trials:
         # Nothing reached our closures. Either the target function ran in

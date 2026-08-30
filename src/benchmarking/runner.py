@@ -10,14 +10,11 @@ from typing import Any
 
 from ontolearn.knowledge_base import KnowledgeBase
 
+from src.benchmarking.inference import evaluate_suite, write_evaluation
 from src.benchmarking.metrics import (
     build_complexity_strata,
     get_complexity_summary,
     mean_embeddings_results,
-)
-from src.benchmarking.wilcoxon import (
-    holm_adjust_across_complexity_strata,
-    holm_adjust_across_kbs,
 )
 from src.config import BenchmarkConfiguration, DataGenerationSettings
 from src.data.complexity import annotate_hardness
@@ -96,7 +93,7 @@ def run_benchmark(
     updated_benchmark_name = update_false_dir_names(config.project.benchmark_name)
     benchmark_dir = base / Path(updated_benchmark_name)
 
-    reports: dict[str, dict[str, SingleRunResult]] = {}
+    reports: dict[str, dict[int, SingleRunResult]] = {}
     failures: dict[str, KnowledgeBaseFailure] = {}
 
     # TODO: switched loops. Will make problems downstream.
@@ -120,13 +117,14 @@ def run_benchmark(
                 )
                 failures[f"{kb_name}_{seed}"] = knowledge_base_failure
                 continue
-            reports.setdefault(kb_name, {})[str(seed)] = report
-            _write_json(payload=holm_adjust_across_complexity_strata(report), path=benchmark_dir / f"{kb_name}_holm_adjusted_{seed}_across_strata.json")
+            reports.setdefault(kb_name, {})[seed] = report
+            #_write_json(payload=holm_adjust_across_complexity_strata(report), path=benchmark_dir / f"{kb_name}_holm_adjusted_{seed}_across_strata.json")
             # despite what the methods says, this is actually across seeds
-            _write_json(payload=holm_adjust_across_kbs(reports[kb_name]), path=benchmark_dir / f"KBs_holm_adjusted_{seed}.json")
+            #_write_json(payload=holm_adjust_across_kbs(reports[kb_name]), path=benchmark_dir / f"KBs_holm_adjusted_{seed}.json")
         # _write_complexity_summary(reports, benchmark_dir, kb_name)
         # _write_embeddings_summary(reports, benchmark_dir, kb_name)
-    #_clean_benchmark_dir(benchmark_dir)
+    write_evaluation(evaluate_suite(reports), benchmark_dir / "suite_evaluation.json")
+    
     summary = {
         "num_runs": len(reports),
         "failures": failures,
@@ -358,13 +356,14 @@ def run_single(
         )
         _write_json(
             payload=knowledge_base_stats.to_dict(),
-            path=paths.kb_dir / f"knowledge_base_stats_{seed}.json",
+            path=paths.seed_dir / f"knowledge_base_stats_{seed}.json",
         )
         logger.info(
             "Wrote knowledge-base stats to %s",
-            paths.kb_dir / f"knowledge_base_stats_{seed}.json",
+            paths.seed_dir / f"knowledge_base_stats_{seed}.json",
         )
         _remove_trials(path=paths.embeddings_dir)
+        _clean_benchmark_dir(paths.seed_dir)
         return single_run_result 
     finally:
         if handler is not None:

@@ -39,7 +39,7 @@ class RunPaths:
     seed: int
 
     @property
-    def kb_dir(self) -> Path:
+    def seed_dir(self) -> Path:
         return self.root
 
     @property
