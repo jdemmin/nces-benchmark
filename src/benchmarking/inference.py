@@ -104,6 +104,7 @@ class PairedObservation:
     depth: int | None = None
     expressivity: str | None = None
     extension_ratio: float | None = None
+    target_extension_size: int | None = None
 
     @property
     def difference(self) -> float:
@@ -126,6 +127,7 @@ class PairedObservation:
             "depth": self.depth,
             "expressivity": self.expressivity,
             "extension_ratio": self.extension_ratio,
+            "target_extension_size": self.target_extension_size,
         }
 
 
@@ -378,6 +380,12 @@ def build_paired_design(
             depth = complexity.get("depth")
             expressivity = complexity.get("expressivity")
             extension_ratio = complexity.get("extension_ratio")
+            hardness = complexity.get("hardness")
+            target_extension_size = None
+            if hardness is None:
+                target_extension_size = None
+            else:
+                target_extension_size = complexity.get("extension_size")
 
             contributed = False
             for outcome in requested:
@@ -403,6 +411,9 @@ def build_paired_design(
                             None
                             if extension_ratio is None
                             else float(extension_ratio)
+                        ),
+                        target_extension_size=(
+                            None if target_extension_size is None else int(target_extension_size)
                         ),
                     )
                 )
@@ -1669,11 +1680,17 @@ def _extension_sizes(design: PairedDesign) -> ExtensionSizeSummary | None:
         if empty
         else float("nan")
     )
+    target_observations = design.for_outcome("target_extension_size")
+    target_mean = (
+        float(np.mean([o.dice_value for o in target_observations]))
+        if target_observations
+        else float("nan")
+    )
 
     # |T| is recoverable from the target extension totals carried on the
     # primary/robustness observations; approximate via recall identity is
     # avoided in favour of an explicit NaN when unavailable.
-    target_mean = float("nan")
+    #target_mean = float("nan")
 
     def ratio(numerator: float, denominator: float) -> float:
         return (
