@@ -34,7 +34,6 @@ from src.config import EmbeddingSettings
 from src.data.results import (
     EmbeddingResult,
     LearningProblemResult,
-    MeanMetricsResult,
     MetricsResult,
     NCESStats,
 )
@@ -167,11 +166,11 @@ class TestCalculateExtensionMetrics:
         # TP=2, FP=1, FN=2, TN=10-2-1-2=5
         assert m.intersection == 2
         assert m.union == 5
-        assert m.precision == pytest.approx(round(2 / 3, 4))
-        assert m.recall == pytest.approx(round(0.5, 4))
-        assert m.f1 == pytest.approx(round(2 * (2 / 3) * 0.5 / ((2 / 3) + 0.5), 4))
-        assert m.jaccard == pytest.approx(round(2 / 5, 4))
-        assert m.accuracy == pytest.approx(round(7 / 10, 4))
+        assert m.precision == pytest.approx(2 / 3,)
+        assert m.recall == pytest.approx(0.5)
+        assert m.f1 == pytest.approx(2 * (2 / 3) * 0.5 / ((2 / 3) + 0.5))
+        assert m.jaccard == pytest.approx(2 / 5)
+        assert m.accuracy == pytest.approx(7 / 10)
         assert m.semantic_equivalence is False
 
     def test_individuals_outside_all_individuals_extend_the_universe(self):
@@ -185,7 +184,7 @@ class TestCalculateExtensionMetrics:
         )
 
         # universe = {a, b, ghost} -> TP=1, FP=1, FN=1, TN=0
-        assert m.accuracy == pytest.approx(round(1 / 3, 4))
+        assert m.accuracy == pytest.approx(1 / 3)
         assert m.union == 3
 
     def test_empty_prediction_yields_zeroes_not_division_error(self, universe):
@@ -195,7 +194,7 @@ class TestCalculateExtensionMetrics:
         assert m.recall == 0.0
         assert m.f1 == 0.0
         assert m.jaccard == 0.0
-        assert m.accuracy == pytest.approx(round(0.7, 4))  # 7 true negatives
+        assert m.accuracy == pytest.approx(0.7)  # 7 true negatives
         assert m.semantic_equivalence is False
 
     def test_both_empty_is_equivalent_but_scores_zero_on_f1(self, universe):
