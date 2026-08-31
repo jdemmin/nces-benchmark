@@ -262,6 +262,7 @@ def _gather_learning_problems_phase(
     ) -> LearningProblemPhaseResult:
 
     hash_file_path = paths.nces_data_dir / "data_generation_settings_hash.txt"
+    split: dict[str, list[LearningProblem]]
     if not has_no_learning_problem_results:
         logger.info(
             "Data generation settings have not changed." \
