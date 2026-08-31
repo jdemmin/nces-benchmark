@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
@@ -16,6 +15,7 @@ from src.config import SPLIT_RATIOS, EmbeddingSettings
 from src.data.ontology import Triple, local_name
 from src.models.hpo_search_utils import selection_score
 from src.random_utils import seed_everything
+from src.writing_utils import write_json
 
 logger = logging.getLogger(__name__)
 
@@ -325,8 +325,21 @@ def generate_random_embeddings(
     return output_path
 
 
+@dataclass(frozen=True)
+class BestReport:
+    best_settings: EmbeddingSettings
+    report: dict[str, Any]
+    validation_error: str | None
+
+    def to_dict(self):
+        return {
+            "best_settings": self.best_settings.to_dict(),
+            "report": self.report,
+            "validation_error": self.validation_error
+        }
+
+
 def build_embeddings(
-    kb_path: Path,
     embeddings_dir: Path,
     data_dir: Path,
     embedding_settings: EmbeddingSettings,
@@ -352,25 +365,31 @@ def build_embeddings(
 
     if "dice" in embedding_conditions:
         seed_everything(seed)
-        best, report, trials, validation_error, run_dir = search_best_embedding_setting(
+        best_settings, report, trials, validation_error, run_dir = search_best_embedding_setting(
             data_dir, embeddings_dir, embedding_settings, seed=seed
         )
-        _write_json(
-            {
-                "best": best.to_dict(),
-                "report": report,
-                "validation_error": validation_error,
-            },
+        write_json(
+            BestReport(
+                best_settings=best_settings, 
+                report=report, 
+                validation_error=validation_error
+            ),
             embeddings_dir / "best_report.json",
         )
-        chosen = best
-        output_path = embeddings_dir / f"{best.model_name}.csv"
-        export_entity_embeddings(run_dir, output_path, expected_dim=nces_embedding_dim)
-        # _cleanup_run_dir(run_dir)
-        logger.info("Cleaned up DICE run directory %s after exporting embeddings", run_dir)
+        chosen = best_settings
+        output_path = embeddings_dir / f"{best_settings.model_name}.csv"
+        export_entity_embeddings(
+            run_dir, 
+            output_path, 
+            expected_dim=nces_embedding_dim
+        )
+        logger.info(
+            "Cleaned up DICE run directory %s after exporting embeddings", 
+            run_dir
+        )
         score, _ = selection_score(report)
         results["dice"] = EmbeddingResultDice(
-            embedding_settings=best,
+            embedding_settings=best_settings,
             score=score,
             metrics={
                 section: report[section]
@@ -385,7 +404,7 @@ def build_embeddings(
             "DICE embedding completed: %d entities, dim=%d, score=%.4f, "
             "validation_error=%s",
             len(entity_names),
-            best.embedding_dim,
+            best_settings.embedding_dim,
             score,
             validation_error,
         )
@@ -423,7 +442,7 @@ def build_embeddings(
         )
 
     report_path = embeddings_dir / "embedding_report.json"
-    _write_json(
+    write_json(
         {
             "triple_counts": counts,
             "num_entities": len(entity_names),
@@ -435,12 +454,6 @@ def build_embeddings(
     )
     return results, csv_dim
 
-def _write_json(data: dict, path: Path) -> None:
-    """Write a JSON file with indentation and a trailing newline."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2)
-        handle.write("\n")
 
 def _entity_embedding_matrix(model: Any) -> np.ndarray:
     """Return the dense entity-embedding matrix from a loaded ``KGE``.

@@ -585,8 +585,19 @@ class OntologyPhaseResult:
 class LearningProblemPhaseResult:
     target_extensions: dict[str, frozenset[str]]
     split: dict[str, list[LearningProblem]]
+    unparsed: list[str]
 
-
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target_extensions": {
+                key: list(value) for key, value in self.target_extensions.items()
+            },
+            "split": {
+                key: [problem.to_dict() for problem in value] for key, value in self.split.items()
+            },
+            "unparsed": self.unparsed
+        }
+    
 @dataclass(frozen=True)
 class HardnessAnnotationResult:
     annotated_problems: list[LearningProblem]

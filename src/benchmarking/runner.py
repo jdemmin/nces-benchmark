@@ -59,6 +59,7 @@ from src.paths import (
     update_false_dir_names,
 )
 from src.random_utils import seed_everything
+from src.writing_utils import write_json
 
 logger = logging.getLogger(__name__)
 
@@ -73,19 +74,8 @@ def run_benchmark(
     output_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run every (knowledge base, seed) combination and aggregate results."""
-    _order_embedding_conditions(config.project.embedding_conditions)
-    if (
-        (config.project.embedding_conditions)[0] == "random"
-        and not config.project.embedding_conditions[1:]
-        and len(config.project.embedding_conditions) > 1
-        ):
-        logger.warning(
-            "Random embeddings must follow after other embedding conditions." \
-            "Otherwise, this can lead to random and dice differing in" \
-            "embedding dimensionality." \
-        )
-        raise ValueError("Random embeddings must follow after other embedding conditions.")
 
+    started = time.perf_counter()
     selected_kbs = list(knowledge_bases or config.knowledge_bases)
     selected_seeds = list(seeds or config.project.seeds)
     base = output_dir or OUTPUT_DIR
@@ -102,13 +92,31 @@ def run_benchmark(
     for kb_name in selected_kbs:
         for seed in selected_seeds:
             logger.info("=== %s | seed %d ===", kb_name, seed)
+            seed_everything(seed)
+            kb_path = resolve_knowledge_base(kb_name)
+            paths = run_paths(
+                updated_benchmark_name,
+                seed,
+                kb_name,
+                output_dir=base,
+            )
+            paths.mkdirs()
+            handler = configure_logging(paths.logs_dir / f"{kb_name}_{seed}.log")
+            ontology_phase_result, learning_problem_phase_result = _generate_train_artifacts(
+                config=config, 
+                kb_path=kb_path, 
+                kb_name=kb_name, 
+                paths=paths
+            )
             try:
                 report = run_single(
                     kb_name,
                     seed,
                     config,
-                    output_dir=base,
-                    benchmark_name=updated_benchmark_name
+                    kb_path=kb_path,
+                    paths=paths,
+                    ontology_phase_result=ontology_phase_result,
+                    learning_problem_phase_result=learning_problem_phase_result,
                 )
             except Exception as error:
                 logger.exception("Benchmark run failed for %s seed %d", kb_name, seed)
@@ -120,16 +128,48 @@ def run_benchmark(
                 failures[f"{kb_name}_{seed}"] = knowledge_base_failure
                 continue
             reports.setdefault(kb_name, {})[seed] = report
-    # TODO explicitly mention that here we use a independent seed (default `0`)
-    write_evaluation(evaluate_suite(runs_by_knowledge_base=reports), benchmark_dir / "suite_evaluation.json")
-    
-    summary = {
-        "num_runs": len(reports),
-        "failures": failures,
-    }
-    _write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
-    _clean_dir(path=benchmark_dir, make_zip=True)
-    return summary
+    try:
+        # TODO explicitly mention that here we use a independent seed (default `0`)
+        write_evaluation(evaluate_suite(runs_by_knowledge_base=reports), benchmark_dir / "suite_evaluation.json")  
+    finally:
+        if handler is not None:
+            logging.getLogger().removeHandler(handler)
+            handler.close()
+        summary = {
+            "num_runs": len(reports),
+            "failures": failures,
+            "elapsed_time": round(time.perf_counter() - started, 3),
+        }
+        write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
+        _clean_dir(path=benchmark_dir, make_zip=True)
+        return summary
+
+
+def _generate_train_artifacts(config: BenchmarkConfiguration, kb_path: Path, kb_name: str, paths: RunPaths):
+    current_data_settings_hash: str = _hash_data_generation_settings(config.data_generation)
+    old_data_settings_hash: str | None = _read_data_generation_settings_hash(paths.nces_data_dir)
+    has_no_ontology_parse_result: bool = old_data_settings_hash is None
+    ontology_phase_result = _ontology_phase(
+        has_no_ontology_parse_result=has_no_ontology_parse_result,
+        kb_path=kb_path,
+        knowledge_base_name=kb_name,
+        paths=paths,
+    )
+    has_no_learning_problem_results: bool = (
+        has_no_ontology_parse_result 
+        or current_data_settings_hash != old_data_settings_hash
+    )
+    ontology_parse_result = ontology_phase_result.ontology_parse_result
+    learning_problem_phase_result = _gather_learning_problems_phase(
+        paths=paths,
+        kb_path=kb_path,
+        ontology_parse_result=ontology_parse_result,
+        config=config,
+        knowledge_base_name=kb_name,
+        has_no_learning_problem_results=has_no_learning_problem_results,
+        current_data_settings_hash=current_data_settings_hash,
+    )
+    return ontology_phase_result, learning_problem_phase_result
 
 
 def _clean_dir(path: Path, make_zip: bool = False):
@@ -147,109 +187,66 @@ def run_single(
     knowledge_base_name: str,
     seed: int,
     config: BenchmarkConfiguration,
-    output_dir: Path,
-    benchmark_name: str,
+    kb_path: Path,
+    paths: RunPaths,
+    ontology_phase_result: OntologyPhaseResult,
+    learning_problem_phase_result: LearningProblemPhaseResult,
 ) -> SingleRunResult:
     """Execute one benchmark run: one (knowledge base, seed) pair."""
-
-    seed_everything(seed)
-    kb_path = resolve_knowledge_base(knowledge_base_name)
-    paths = run_paths(
-        benchmark_name,
-        seed,
-        knowledge_base_name,
-        output_dir=output_dir,
-    )
-    paths.mkdirs()
-    handler = configure_logging(paths.logs_dir / f"{knowledge_base_name}_{seed}.log")
     started = time.perf_counter()
-    try:
-        ontology_parse_result: OntologyParseResult
-        counts: dict[str, int]
-        
-        current_data_settings_hash: str = _hash_data_generation_settings(config.data_generation)
-        old_data_settings_hash: str | None = _read_data_generation_settings_hash(paths.nces_data_dir)
-        has_no_ontology_parse_result: bool = old_data_settings_hash is None
-        ontology_phase_result = _ontology_phase(
-            has_no_ontology_parse_result=has_no_ontology_parse_result,
-            kb_path=kb_path,
-            knowledge_base_name=knowledge_base_name,
-            paths=paths,
-        )
-        ontology_parse_result = ontology_phase_result.ontology_parse_result
-        counts = ontology_phase_result.counts
-        logger.info("Starting Stage 2: Embedding generation.")
-        embedding_report, m = _embedding_stage(
-            paths=paths,
-            kb_path=kb_path,
-            benchmark_settings=config,
-            seed=seed,
-            triples=ontology_parse_result.triples,
-            counts=counts,
-        )
-        logger.info(
-            "Completed Stage 2: Embedding generation for" \
-            "all conditions and collected results."
-        )
-        has_no_learning_problem_results: bool = (
-            has_no_ontology_parse_result 
-            or current_data_settings_hash != old_data_settings_hash
-        )
-        learning_problem_phase_result = _gather_learning_problems_phase(
-            paths=paths,
-            kb_path=kb_path,
-            ontology_parse_result=ontology_parse_result,
-            config=config,
-            knowledge_base_name=knowledge_base_name,
-            has_no_learning_problem_results=has_no_learning_problem_results,
-            current_data_settings_hash=current_data_settings_hash,
-        )
-        split = learning_problem_phase_result.split
-        target_extensions = learning_problem_phase_result.target_extensions
-        single_run_result = _stage_train_eval_nces(
-            split=split,
-            paths=paths,
-            kb_path=kb_path,
-            knowledge_base=ontology_parse_result.knowledge_base,
-            all_individuals=ontology_parse_result.all_individuals,
-            target_extensions=target_extensions,
-            embedding_report=embedding_report,
-            config=config,
-            m=m,
-            seed=seed
-        )
-        logger.info(
-            "Completed Stage 6: NCES training and evaluation for all conditions."
-        )
-        single_run_result.set_runtime(round(time.perf_counter() - started, 3))
-        # Write single-run result to JSON. Complexity summaries will be written separately.
-        _write_json(
-            payload=single_run_result.to_dict(),
-            path=paths.nces_results_dir / "single_run_result.json",
-        )
-        logger.info("Wrote single-run result to %s", paths.nces_results_dir / "single_run_result.json")
-        atomic_extensions = compute_atomic_class_extensions(ontology_parse_result.knowledge_base)
-        knowledge_base_stats = KnowledgeBaseStats(
-            knowledge_base_name=knowledge_base_name,
-            number_of_individuals=len(ontology_parse_result.all_individuals),
-            number_of_triples=len(ontology_parse_result.triples),
-            number_of_atomic_classes=len(atomic_extensions),
-        )
-        _write_json(
-            payload=knowledge_base_stats.to_dict(),
-            path=paths.seed_dir / f"knowledge_base_stats_{seed}.json",
-        )
-        logger.info(
-            "Wrote knowledge-base stats to %s",
-            paths.seed_dir / f"knowledge_base_stats_{seed}.json",
-        )
-        _remove_trials(path=paths.embeddings_dir)
-        _clean_dir(path=paths.seed_dir, make_zip=True)
-        return single_run_result 
-    finally:
-        if handler is not None:
-            logging.getLogger().removeHandler(handler)
-            handler.close()
+    ontology_parse_result: OntologyParseResult = ontology_phase_result.ontology_parse_result
+    counts: dict[str, int] = ontology_phase_result.counts
+    logger.info("Starting Stage 4: Embedding generation.")
+    embedding_report, m = _embedding_stage(
+        paths=paths,
+        benchmark_settings=config,
+        seed=seed,
+        triples=ontology_parse_result.triples,
+        counts=counts,
+    )
+    logger.info(
+        "Completed Stage 4: Embedding generation for" \
+        "all conditions and collected results."
+    )
+    split = learning_problem_phase_result.split
+    target_extensions = learning_problem_phase_result.target_extensions
+    single_run_result = _stage_train_eval_nces(
+        split=split,
+        paths=paths,
+        kb_path=kb_path,
+        knowledge_base=ontology_parse_result.knowledge_base,
+        all_individuals=ontology_parse_result.all_individuals,
+        target_extensions=target_extensions,
+        embedding_report=embedding_report,
+        config=config,
+        m=m,
+        seed=seed
+    )
+    logger.info("Completed Stage 5: NCES training and evaluation for all conditions.")
+    logger.info("Wrote single-run result to %s", paths.nces_results_dir / "single_run_result.json")
+    atomic_extensions = compute_atomic_class_extensions(ontology_parse_result.knowledge_base)
+    knowledge_base_stats = KnowledgeBaseStats(
+        knowledge_base_name=knowledge_base_name,
+        number_of_individuals=len(ontology_parse_result.all_individuals),
+        number_of_triples=len(ontology_parse_result.triples),
+        number_of_atomic_classes=len(atomic_extensions),
+    )
+    write_json(
+        payload=knowledge_base_stats,
+        path=paths.seed_dir / f"knowledge_base_stats_{seed}.json",
+    )
+    logger.info(
+        "Wrote knowledge-base stats to %s",
+        paths.seed_dir / f"knowledge_base_stats_{seed}.json",
+    )
+    single_run_result.set_runtime(round(time.perf_counter() - started, 3))
+    write_json(
+        payload=single_run_result,
+        path=paths.nces_results_dir / "single_run_result.json",
+    )
+    _remove_trials(path=paths.embeddings_dir)
+    _clean_dir(path=paths.seed_dir, make_zip=True)
+    return single_run_result 
 
 
 def _gather_learning_problems_phase(
@@ -260,9 +257,13 @@ def _gather_learning_problems_phase(
     ontology_parse_result: OntologyParseResult, 
     config: BenchmarkConfiguration,
     ) -> LearningProblemPhaseResult:
+    
+    split: dict[str, list[LearningProblem]]
+    unparsed: list[str] = []
+    target_extensions: dict[str, frozenset[str]] = {}
 
     hash_file_path = paths.nces_data_dir / "data_generation_settings_hash.txt"
-    split: dict[str, list[LearningProblem]]
+
     if not has_no_learning_problem_results:
         logger.info(
             "Data generation settings have not changed." \
@@ -292,7 +293,7 @@ def _gather_learning_problems_phase(
             config.data_generation,
             seed=current_data_settings_hash,
         )
-        logger.info("Completed Stage 3: Learning-problem generation for %d problems.", len(problems))
+        logger.info("Completed Stage 2.1: Learning-problem generation for %d problems.", len(problems))
         if not problems:
             raise RuntimeError(
                 f"No non-degenerate learning problems generated for {knowledge_base_name}."
@@ -310,32 +311,10 @@ def _gather_learning_problems_phase(
             len_split_train,
             len_split_test,
         )
-        logger.info("Completed Stage 4: Learning-problem splitting.")
-        knowledge_base = ontology_parse_result.knowledge_base
-        unparsed: list[str] = []
-        target_extensions: dict[str, frozenset[str]] = {}
-        for key, value in split.items():
-            logger.info(f"Annotating hardness for `{key}` split of size {len(value)}")
-            annotation_result = _stage_hardness_annotation(
-                value, knowledge_base, ontology_parse_result.all_individuals
-            )
-            split[key] = annotation_result.annotated_problems
-            unparsed.extend(annotation_result.unparsed_problems)
-            target_extensions.update(annotation_result.target_extensions)
-        logger.info("Completed Stage 5: Hardness annotation for %d learning problems", len_split_train + len_split_test)
-        if unparsed:
-            logger.warning(
-                "%d of %d target concepts could not be parsed; used sampled "
-                "positives as their extension (ids: %s%s)",
-                len(unparsed),
-                len(problems),
-                ", ".join(unparsed[:5]),
-                ", ..." if len(unparsed) > 5 else "",
-            )
-        # moved here to save the split immediately after hardness annotation.
-        # Less reasoner calls needed if we save the split here immediately.
+        logger.info("Completed Stage 2.2: Learning-problem splitting.")
+        split, target_extensions, unparsed = _annotate_split(split, ontology_parse_result, len(problems))
         save_split(split, paths.nces_data_dir)
-        _write_json(
+        write_json(
             payload={k: sorted(v) for k, v in target_extensions.items()},
             path=paths.nces_data_dir / "target_extensions.json",
         )
@@ -344,7 +323,33 @@ def _gather_learning_problems_phase(
     return LearningProblemPhaseResult(
         target_extensions=target_extensions,
         split=split,
+        unparsed=unparsed,
     )
+
+
+def _annotate_split(split: dict[str, list[LearningProblem]], ontology_parse_result: OntologyParseResult, len_problems: int):
+    knowledge_base = ontology_parse_result.knowledge_base
+    unparsed: list[str] = []
+    target_extensions: dict[str, frozenset[str]] = {}
+    for key, value in split.items():
+        logger.info(f"Annotating hardness for `{key}` split of size {len(value)}")
+        annotation_result = _stage_hardness_annotation(
+            value, knowledge_base, ontology_parse_result.all_individuals
+        )
+        split[key] = annotation_result.annotated_problems
+        unparsed.extend(annotation_result.unparsed_problems)
+        target_extensions.update(annotation_result.target_extensions)
+    logger.info("Completed Stage 2.3: Hardness annotation for splits")
+    if unparsed:
+        logger.warning(
+            "%d of %d target concepts could not be parsed; used sampled "
+            "positives as their extension (ids: %s%s)",
+            len(unparsed),
+            len_problems,
+            ", ".join(unparsed[:5]),
+            ", ..." if len(unparsed) > 5 else "",
+        )
+    return split, target_extensions, unparsed
 
 
 def _ontology_phase(has_no_ontology_parse_result: bool | None, kb_path: Path, knowledge_base_name: str, paths: RunPaths) -> OntologyPhaseResult:
@@ -352,8 +357,8 @@ def _ontology_phase(has_no_ontology_parse_result: bool | None, kb_path: Path, kn
     if has_no_ontology_parse_result:
         logger.info("No previous ontology parse results found")
         ontology_parse_result = _parse_ontology(kb_path)
-        _write_json(
-            payload=ontology_parse_result.to_dict(), 
+        write_json(
+            payload=ontology_parse_result,
             path=paths.ontology_parse_data_dir / "ontology_parse_result.json"
         )
         split_triple = split_dicee_dataset(
@@ -438,26 +443,8 @@ def _remove_trials(path: Path) -> None:
     )
 
 
-def _order_embedding_conditions(embedding_conditions: list[str]) -> None:
-    """Ensure that 'random' is always the last embedding condition."""
-
-    if "random" == embedding_conditions[0] and len(embedding_conditions) > 1:
-        embedding_conditions.remove("random")
-        embedding_conditions.append("random")
-        logger.warning(
-                    "Random embedding condition must follow after dice embedding" \
-                    "conditions. Otherwise, this can lead to a situation where" \
-                    "random and the dice embedding differ in dimensionality,"
-                )
-        logger.info(
-            "Your error has been corrected. The embedding conditions have been " \
-            "reordered to ensure 'random' is last."
-        )
-
-
 def _embedding_stage(
         paths: RunPaths,
-        kb_path: Path,
         benchmark_settings: BenchmarkConfiguration,
         seed: int,
         triples: list[Triple],
@@ -468,7 +455,6 @@ def _embedding_stage(
     """
 
     report, m = build_embeddings(
-            kb_path=kb_path,
             embeddings_dir=paths.embeddings_dir,
             data_dir=paths.embeddings_data_dir,
             embedding_settings=benchmark_settings.embedding,
@@ -479,13 +465,6 @@ def _embedding_stage(
             counts=counts,
         )
     return report, m
-
-
-def _write_json(payload: dict[str, Any], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, ensure_ascii=False, default=str)
-    logger.info("Wrote %s", path)
 
 
 def _parse_ontology(kb_path: Path) -> OntologyParseResult:
@@ -588,8 +567,8 @@ def _stage_train_eval_nces(
             m=embedding_dim,
             seed=seed,
         )
-        _write_json(
-            payload=training.to_dict(),
+        write_json(
+            payload=training,
             path=trained_model_path / f"nces_training_stats_{condition}.json",
         )
         logger.info(
