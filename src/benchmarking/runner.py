@@ -127,7 +127,8 @@ def run_benchmark(
                 failures[f"{kb_name}_{seed}"] = knowledge_base_failure
                 continue
             reports.setdefault(kb_name, {})[seed] = report
-    write_evaluation(evaluate_suite(reports), benchmark_dir / "suite_evaluation.json")
+    # TODO explicitly mention that here we use a independent seed (default `0`)
+    write_evaluation(evaluate_suite(runs_by_knowledge_base=reports), benchmark_dir / "suite_evaluation.json")
     
     summary = {
         "num_runs": len(reports),
@@ -337,7 +338,10 @@ def _gather_learning_problems_phase(
             "Using cached learning problems and splits."
         )
         split = _load_split(paths.nces_data_dir)
-        target_extensions = _read_json(paths.nces_data_dir / "target_extensions.json")
+        raw = _read_json(paths.nces_data_dir / "target_extensions.json")
+        target_extensions = {
+            key: frozenset(value) for key, value in raw.items()
+        }
         with open(paths.nces_data_dir / "unparsed.json", "r") as f:
             unparsed = json.load(f)
         logger.info(
@@ -401,8 +405,8 @@ def _gather_learning_problems_phase(
         # Less reasoner calls needed if we save the split here immediately.
         save_split(split, paths.nces_data_dir)
         _write_json(
-            payload=target_extensions,
-            path=paths.nces_data_dir / "target_extensions.json"
+            payload={k: sorted(v) for k, v in target_extensions.items()},
+            path=paths.nces_data_dir / "target_extensions.json",
         )
         with open(paths.nces_data_dir / "unparsed.json", "w") as f:
             json.dump(unparsed, f, indent=4)
