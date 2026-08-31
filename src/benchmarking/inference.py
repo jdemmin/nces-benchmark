@@ -16,7 +16,6 @@ architecture and seed shared by the two embedding conditions.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import math
 from collections.abc import Iterable, Mapping, Sequence
@@ -24,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from src.data.lp import stable_id
 from src.data.results import LearningProblemResult, SingleRunResult
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 PRIMARY_OUTCOME: str = "lift"
 
 #: Agreement check against the primary. Not a second primary.
-ROBUSTNESS_OUTCOME: str = "f1_score"
+ROBUSTNESS_OUTCOME: str = "lift"
 
 #: Descriptive mechanism outcomes. Reported, never tested confirmatorily.
 MECHANISM_OUTCOMES: tuple[str, ...] = (
@@ -197,9 +197,12 @@ def _problem_id(result: LearningProblemResult) -> str:
     identifier = getattr(problem, "id", None)
     if identifier:
         return str(identifier)
-    concept = getattr(problem, "target_concept", "") or ""
-    digest = hashlib.blake2s(concept.encode("utf-8"), digest_size=6).hexdigest()
-    return f"lp_{digest}"
+    logger.warning(
+        "Learning problem has no id; falling back to hash of target" \
+        "concept and examples."
+    )
+    id = stable_id(problem)
+    return id
 
 
 def _outcome_value(
