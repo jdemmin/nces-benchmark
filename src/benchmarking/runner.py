@@ -12,11 +12,6 @@ from typing import Any
 from ontolearn.knowledge_base import KnowledgeBase
 
 from src.benchmarking.inference import evaluate_suite, write_evaluation
-from src.benchmarking.metrics import (
-    build_complexity_strata,
-    get_complexity_summary,
-    mean_embeddings_results,
-)
 from src.config import BenchmarkConfiguration, DataGenerationSettings, _read_json
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
@@ -37,10 +32,8 @@ from src.data.results import (
     EmbeddingResult,
     HardnessAnnotationResult,
     KnowledgeBaseFailure,
-    KnowledgeBaseResult,
     KnowledgeBaseStats,
     LearningProblemPhaseResult,
-    MeanMetricsResult,
     OntologyParseResult,
     OntologyPhaseResult,
     SingleRunResult,
@@ -135,7 +128,7 @@ def run_benchmark(
         "failures": failures,
     }
     _write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
-
+    _clean_dir(path=benchmark_dir, make_zip=True)
     return summary
 
 
@@ -148,51 +141,6 @@ def _clean_dir(path: Path, make_zip: bool = False):
     logger.info("Proceeding to remove the directory %s. Excluding the zip archive.", path)
     shutil.rmtree(path)
     logger.info("Completed removal of the directory %s. Excluding the zip archive.", path)
-
-
-def _write_embeddings_summary(reports: dict[str, SingleRunResult], benchmark_dir: Path, kb_name: str):
-    random_mean = mean_embeddings_results(
-        [r.random_embedding_result for r in reports.values() if r.random_embedding_result is not None]
-    )
-    dice_mean = mean_embeddings_results(
-        [r.dice_embedding_result for r in reports.values() if r.dice_embedding_result is not None]
-    )
-    knowledge_base_result = KnowledgeBaseResult(
-        knowledge_base=kb_name,
-        mean_random_metrics=random_mean,
-        mean_dice_metrics=dice_mean,
-    )
-    _write_json(
-        payload=knowledge_base_result.to_dict(),
-        path=benchmark_dir / f"{kb_name}_mean_across_seeds.json",
-    )
-
-
-def _write_complexity_summary(reports: dict[str, SingleRunResult], benchmark_dir: Path, kb_name: str):
-    complexity_summary = get_complexity_summary([
-        # flattens list of lists of LearningProblemResults into a single list
-        item for sublist in [
-            r.random_embedding_result.learning_problem_results
-            for r in reports.values() if r.random_embedding_result is not None
-        ]
-        for item in sublist
-    ])
-    _write_json(
-        payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
-        path=benchmark_dir / f"{kb_name}_mean_across_seeds_random_complexity_summary.json",
-    )
-    complexity_summary = get_complexity_summary([
-        # flattens list of lists of LearningProblemResults into a single list
-        item for sublist in [
-            r.dice_embedding_result.learning_problem_results
-            for r in reports.values() if r.dice_embedding_result is not None
-        ]
-        for item in sublist
-    ])
-    _write_json(
-        payload=dict(sorted(_convert_complexity_summary_to_dict(complexity_summary).items())),
-        path=benchmark_dir / f"{kb_name}_mean_across_seeds_dice_complexity_summary.json",
-    )
 
 
 def run_single(
@@ -280,29 +228,6 @@ def run_single(
             path=paths.nces_results_dir / "single_run_result.json",
         )
         logger.info("Wrote single-run result to %s", paths.nces_results_dir / "single_run_result.json")
-        dice_complexity_summary = get_complexity_summary(
-            single_run_result.dice_embedding_result.learning_problem_results
-            if single_run_result.dice_embedding_result else []
-        )
-        _write_json(
-            payload=dict(sorted(_convert_complexity_summary_to_dict(dice_complexity_summary).items())),
-            path=paths.nces_results_dir / "dice_complexity_summary.json",
-        )
-        random_complexity_summary = get_complexity_summary(
-            single_run_result.random_embedding_result.learning_problem_results
-            if single_run_result.random_embedding_result else []
-        )
-        _write_json(
-            payload=dict(sorted(_convert_complexity_summary_to_dict(random_complexity_summary).items())),
-            path=paths.nces_results_dir / "random_complexity_summary.json",
-        )
-        logger.info(
-            "Wrote complexity summaries to %s, %s",
-            paths.nces_results_dir / "dice_complexity_summary.json",
-            paths.nces_results_dir / "random_complexity_summary.json",
-        )
-        single_run_result.random_complexity_aggregates = build_complexity_strata(random_complexity_summary)
-        single_run_result.dice_complexity_aggregates = build_complexity_strata(dice_complexity_summary)
         atomic_extensions = compute_atomic_class_extensions(ontology_parse_result.knowledge_base)
         knowledge_base_stats = KnowledgeBaseStats(
             knowledge_base_name=knowledge_base_name,
@@ -510,20 +435,6 @@ def _remove_trials(path: Path) -> None:
     logger.info(
         "Completed removal of unused embedding files with keyword ``trial`` in %s", path
     )
-
-
-def _convert_complexity_summary_to_dict(
-        complexity_summary: dict[str, dict[str, MeanMetricsResult]]
-    ) -> dict[str, dict[str, dict[str, float]]]:
-    """Convert a complexity summary to a dictionary of dictionaries of dictionaries."""
-
-    return {
-        axis: {
-            complexity_value: mean_metrics.to_dict()
-            for complexity_value, mean_metrics in complexity_dict.items()
-        }
-        for axis, complexity_dict in complexity_summary.items()
-    }
 
 
 def _order_embedding_conditions(embedding_conditions: list[str]) -> None:

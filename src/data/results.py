@@ -401,8 +401,6 @@ class SingleRunResult:
     """
     knowledge_base: str
     random_embedding_result: EmbeddingResult | None
-    random_complexity_aggregates: list[ComplexityStratum] | None
-    dice_complexity_aggregates: list[ComplexityStratum] | None
     dice_embedding_result: EmbeddingResult | None
     runtime: float | None
 
