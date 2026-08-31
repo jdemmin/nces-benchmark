@@ -14,7 +14,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Iterable, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -30,44 +30,10 @@ logger = logging.getLogger(__name__)
 _POS_KEY = "positive examples"
 #: Key used by ontolearn's ``LPs.json`` for negative examples.
 _NEG_KEY = "negative examples"
-
-
-@dataclass(frozen=True)
-class LearningProblemTruncated:
-    """A learning problem with only the target concept and complexity.
-
-    This is used to stratify learning problems before they are expanded into
-    full IRIs.
-    """
-
-    id: str
-    target_concept: str
-    complexity: Complexity
-    num_pos: int = field(default=0)
-    num_neg: int = field(default=0)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "target_concept": self.target_concept,
-            "complexity": self.complexity.to_dict(),
-            "num_pos": self.num_pos,
-            "num_neg": self.num_neg,
-        }
-
-    @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> LearningProblemTruncated:
-        return cls(
-            id=str(payload["id"]),
-            target_concept=str(payload["target_concept"]),
-            complexity=Complexity.from_dict(payload["complexity"]),
-            num_pos=int(payload.get("num_pos", 0)),
-            num_neg=int(payload.get("num_neg", 0)),
-        )
     
 
 @dataclass(frozen=True)
-class LearningProblem(LearningProblemTruncated):
+class LearningProblem:
     """One learning problem in the canonical project schema."""
 
     id: str
@@ -88,25 +54,15 @@ class LearningProblem(LearningProblemTruncated):
         object.__setattr__(self, "num_neg", len(self.neg_example))
 
     def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["complexity"] = asdict(self.complexity)
-        return payload
-
-    def to_truncated(self) -> LearningProblemTruncated:
-        return LearningProblemTruncated(
-            id=self.id,
-            target_concept=self.target_concept,
-            complexity=self.complexity,
-            num_pos=self.num_pos,
-            num_neg=self.num_neg,
-        )
-
-    @classmethod
-    def to_truncated_list(cls, problems: Iterable[LearningProblem]) -> list[LearningProblemTruncated]:
-        return [
-            problem.to_truncated()
-            for problem in problems
-        ]
+        return {
+            "id": self.id,
+            "target_concept": self.target_concept,
+            "complexity": self.complexity.to_dict(),
+            "pos_example": self.pos_example,
+            "neg_example": self.neg_example,
+            "num_pos": self.num_pos,
+            "num_neg": self.num_neg,
+        }
 
     def as_nces_datapoint(self) -> tuple[str, dict[str, list[str]]]:
         """Convert to the ``(name, examples)`` tuple that ``NCES`` consumes.
@@ -408,6 +364,13 @@ def _stable_id(target_concept: str, positives: list[str], negatives: list[str]) 
         h.update(iri.encode("utf-8"))
         h.update(b"\x01")
     return f"lp_{h.hexdigest()[:12]}"
+
+def stable_id(learning_problem: LearningProblem) -> str:
+    return _stable_id(
+        target_concept=learning_problem.target_concept,
+        positives=learning_problem.pos_example,
+        negatives=learning_problem.neg_example,
+    )
 
 
 def _split_score(seed: str, problem_id: str) -> float:

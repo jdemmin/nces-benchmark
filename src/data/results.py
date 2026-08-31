@@ -7,7 +7,7 @@ from typing import Any
 from ontolearn.knowledge_base import KnowledgeBase
 
 from src.config import EmbeddingSettings
-from src.data.lp import LearningProblem, LearningProblemTruncated
+from src.data.lp import LearningProblem
 from src.data.ontology import Triple
 
 
@@ -205,7 +205,7 @@ class LearningProblemResult:
     There is no way to extract it back in its full form,
     but it is not needed for the report anyway.
     """
-    learning_problem: LearningProblemTruncated
+    learning_problem: LearningProblem
     hypothesis: str = ""
     target_extension: TargetExtensionStructure | None
     hypothesis_extension: TargetExtensionStructure | None
@@ -223,7 +223,7 @@ class LearningProblemResult:
         error: str | None = None,
         hypothesis: str = "",
     ):
-        self.learning_problem = learning_problem.to_truncated()
+        self.learning_problem = learning_problem
         self.hypothesis = hypothesis
         self.target_extension = target_extension
         self.hypothesis_extension = hypothesis_extension
@@ -287,7 +287,6 @@ class EmbeddingResult:
     the DICE embedding method.
     """
     split_name: str
-    mean_metrics: MeanMetricsResult | None
     learning_problem_results: list[LearningProblemResult]
     number_of_problems: int
     number_of_successful_problems: int
