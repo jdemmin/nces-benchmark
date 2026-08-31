@@ -274,10 +274,6 @@ raw output to `LPs.json`, and the project then normalizes that output into the
 canonical schema below — expanding local names back to full IRIs and rejecting
 degenerate problems.
 
-> **Why `LPGen` and not `LearningProblemGenerator`?** The lower-level
-> `LearningProblemGenerator.get_examples()` is broken upstream; see
-> `KNOWN_ISSUES.md`. Going through `LPGen` avoids the defect entirely, because
-> `LPs.json` already contains materialized example sets.
 
 ### Settings
 
