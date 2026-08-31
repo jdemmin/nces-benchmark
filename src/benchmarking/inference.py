@@ -25,6 +25,7 @@ from typing import Any
 
 from src.data.lp import stable_id
 from src.data.results import LearningProblemResult, SingleRunResult
+from src.random_utils import seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -677,6 +678,7 @@ def _cluster_bootstrap_ci(
         return None
 
     rng = np.random.default_rng(seed)
+    seed_everything(seed)
     clusters = [np.asarray(by_seed[s], dtype=float) for s in seeds]
     means = np.empty(resamples, dtype=float)
     count = len(clusters)
