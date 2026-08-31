@@ -12,10 +12,6 @@ response is always a paired difference
 
 which cancels the target concept, examples, split, knowledge base, NCES
 architecture and seed shared by the two embedding conditions.
-
-Heavy numerical dependencies are imported lazily so that importing this
-module -- and therefore ``nces-benchmark --help`` -- does not pull in
-``numpy``/``scipy``.
 """
 
 from __future__ import annotations
@@ -52,6 +48,7 @@ MECHANISM_OUTCOMES: tuple[str, ...] = (
 
 #: Screening only. Enters the Benjamini-Hochberg family.
 EXPLORATORY_OUTCOMES: tuple[str, ...] = (
+    "mcc",
     "accuracy",
     "jaccard",
     "semantic_equivalence",
@@ -226,6 +223,12 @@ def _outcome_value(
 
     if outcome == "runtime_seconds":
         return None if result.runtime is None else float(result.runtime)
+
+    if outcome == "mcc":
+        matrix = _confusion_matrix(result)
+        if matrix is None:
+            return None
+        return matthews_correlation_coefficient(matrix)
 
     metrics = result.metrics
     if metrics is None:
@@ -580,9 +583,6 @@ def _profile_reml(
         if sigma2 <= 0.0:
             return 1e12
         # negative log-likelihood of the REML criterion.
-        # TODO: See, e.g., Harville (1977),
-        # "Maximum Likelihood Approaches to Variance Component
-        # Estimation and to Related Problems" for the derivation.
         return 0.5 * (
             log_det
             + math.log(xtx)
@@ -1621,6 +1621,250 @@ def run_exploratory_grid(
         for index, finding in enumerate(findings)
     ]
 
+
+# --------------------------------------------------------------------------
+# Matthews correlation coefficient
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ConfusionMatrix:
+    """Extension-based confusion matrix for one hypothesis.
+
+    Reconstructed from the fields a ``LearningProblemResult`` carries:
+
+        TP = |P ∩ T|                    (metrics.intersection)
+        FP = |P| - TP                   (hypothesis_extension.positive)
+        FN = |T| - TP                   (target_extension.positive)
+        TN = |U| - TP - FP - FN
+
+    |U| comes from ``target_extension.total`` -- ``positive + negative``
+    where ``negative`` counts the individuals outside the target
+    extension, making the total the full individual count of the
+    knowledge base. This is the same universe the ``accuracy`` metric is
+    already scored over.
+    """
+
+    true_positive: int
+    false_positive: int
+    false_negative: int
+    true_negative: int
+
+    @property
+    def universe_size(self) -> int:
+        return (
+            self.true_positive
+            + self.false_positive
+            + self.false_negative
+            + self.true_negative
+        )
+
+    @property
+    def is_consistent(self) -> bool:
+        """No cell may be negative; a negative cell means bad inputs."""
+        return all(
+            cell >= 0
+            for cell in (
+                self.true_positive,
+                self.false_positive,
+                self.false_negative,
+                self.true_negative,
+            )
+        )
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "true_positive": self.true_positive,
+            "false_positive": self.false_positive,
+            "false_negative": self.false_negative,
+            "true_negative": self.true_negative,
+        }
+
+
+def matthews_correlation_coefficient(matrix: ConfusionMatrix) -> float:
+    r"""MCC in :math:`[-1, 1]`, computed in log space for stability.
+
+    .. math::
+
+        \mathrm{MCC} = \frac{TP \cdot TN - FP \cdot FN}
+        {\sqrt{(TP+FP)(TP+FN)(TN+FP)(TN+FN)}}
+
+    The denominator is a product of four marginals, each of which can
+    reach the size of the knowledge base. On ``vicodi`` that product
+    overflows float64 well before the individual counts become large, so
+    the square root is taken as a sum of logarithms instead of forming
+    the product directly.
+
+    Returns ``0.0`` when any marginal is zero -- the conventional
+    definition for the degenerate case, matching ``scikit-learn``. This
+    happens whenever the hypothesis selects everything, selects nothing,
+    or the target extension is empty or universal.
+    """
+    tp = float(matrix.true_positive)
+    fp = float(matrix.false_positive)
+    fn = float(matrix.false_negative)
+    tn = float(matrix.true_negative)
+
+    marginals = (tp + fp, tp + fn, tn + fp, tn + fn)
+    if any(marginal <= 0.0 for marginal in marginals):
+        # Undefined denominator. Zero is the standard convention: the
+        # hypothesis carries no information about the target.
+        return 0.0
+
+    numerator = tp * tn - fp * fn
+    if numerator == 0.0:
+        return 0.0
+
+    log_denominator = sum(math.log(marginal) for marginal in marginals)
+    # Equivalent to numerator / sqrt(prod(marginals)), without forming
+    # the product.
+    value = math.copysign(
+        math.exp(math.log(abs(numerator)) - 0.5 * log_denominator),
+        numerator,
+    )
+    # Guard against accumulated floating-point drift past the bounds.
+    return max(-1.0, min(1.0, value))
+
+
+def _confusion_matrix(
+    result: LearningProblemResult,
+) -> ConfusionMatrix | None:
+    """Reconstruct the confusion matrix, or ``None`` if not recoverable."""
+    if result.error is not None:
+        return None
+
+    metrics = result.metrics
+    target = result.target_extension
+    hypothesis = getattr(result, "hypothesis_extension", None)
+    if metrics is None or target is None or hypothesis is None:
+        return None
+
+    target_size = getattr(target, "positive", None)
+    universe_size = getattr(target, "total", None)
+    hypothesis_size = getattr(hypothesis, "positive", None)
+    if (
+        target_size is None
+        or universe_size is None
+        or hypothesis_size is None
+    ):
+        return None
+
+    true_positive = int(metrics.intersection)
+    false_positive = int(hypothesis_size) - true_positive
+    false_negative = int(target_size) - true_positive
+    true_negative = (
+        int(universe_size) - true_positive - false_positive - false_negative
+    )
+
+    matrix = ConfusionMatrix(
+        true_positive=true_positive,
+        false_positive=false_positive,
+        false_negative=false_negative,
+        true_negative=true_negative,
+    )
+    if not matrix.is_consistent:
+        logger.warning(
+            "Inconsistent confusion matrix for %s: %s. |P|=%s, |T|=%s, "
+            "|U|=%s, |P∩T|=%s. Skipping MCC for this problem.",
+            _problem_id(result),
+            matrix.to_dict(),
+            hypothesis_size,
+            target_size,
+            universe_size,
+            true_positive,
+        )
+        return None
+    return matrix
+
+
+@dataclass(frozen=True)
+class ClassificationSummary:
+    """Pooled confusion matrix and MCC per embedding condition.
+
+    Two MCC figures are reported and they answer different questions.
+    ``mean_mcc`` weights every learning problem equally and is the
+    quantity the paired analysis operates on. ``pooled_mcc`` is computed
+    from the summed confusion matrix and is dominated by problems with
+    large extensions. Divergence between them indicates that the
+    embedding effect is concentrated in problems of a particular size.
+    """
+
+    condition: str
+    n_problems: int
+    mean_mcc: float
+    pooled_mcc: float
+    pooled_matrix: ConfusionMatrix
+    mean_accuracy: float
+    degenerate_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "condition": self.condition,
+            "n_problems": self.n_problems,
+            "mean_mcc": self.mean_mcc,
+            "pooled_mcc": self.pooled_mcc,
+            "pooled_matrix": self.pooled_matrix.to_dict(),
+            "mean_accuracy": self.mean_accuracy,
+            "degenerate_count": self.degenerate_count,
+        }
+
+
+def summarize_classification(
+    runs: Mapping[int, SingleRunResult], condition: str
+) -> ClassificationSummary | None:
+    """Pool confusion matrices across every problem and seed."""
+    import numpy as np
+
+    per_problem_mcc: list[float] = []
+    per_problem_accuracy: list[float] = []
+    totals = [0, 0, 0, 0]
+    degenerate = 0
+
+    for seed in sorted(runs):
+        embedding_result = runs[seed].get_embedding_result(condition)
+        if embedding_result is None:
+            continue
+        for result in embedding_result.learning_problem_results:
+            matrix = _confusion_matrix(result)
+            if matrix is None:
+                continue
+            value = matthews_correlation_coefficient(matrix)
+            if value == 0.0 and matrix.true_positive * matrix.true_negative == (
+                matrix.false_positive * matrix.false_negative
+            ):
+                degenerate += 1
+            per_problem_mcc.append(value)
+            if result.metrics is not None:
+                per_problem_accuracy.append(float(result.metrics.accuracy))
+            totals[0] += matrix.true_positive
+            totals[1] += matrix.false_positive
+            totals[2] += matrix.false_negative
+            totals[3] += matrix.true_negative
+
+    if not per_problem_mcc:
+        return None
+
+    pooled = ConfusionMatrix(
+        true_positive=totals[0],
+        false_positive=totals[1],
+        false_negative=totals[2],
+        true_negative=totals[3],
+    )
+    return ClassificationSummary(
+        condition=condition,
+        n_problems=len(per_problem_mcc),
+        mean_mcc=float(np.mean(per_problem_mcc)),
+        pooled_mcc=matthews_correlation_coefficient(pooled),
+        pooled_matrix=pooled,
+        mean_accuracy=(
+            float(np.mean(per_problem_accuracy))
+            if per_problem_accuracy
+            else float("nan")
+        ),
+        degenerate_count=degenerate,
+    )
+
+
 # --------------------------------------------------------------------------
 # Assembled evaluation
 # --------------------------------------------------------------------------
@@ -1642,6 +1886,7 @@ class EvaluationResult:
     trend: TrendResult | None
     robustness: RobustnessResult | None
     mechanism: list[MechanismSummary] = field(default_factory=list)
+    classification: list[ClassificationSummary] = field(default_factory=list)
     extension_sizes: ExtensionSizeSummary | None = None
     exploratory: list[ExploratoryFinding] = field(default_factory=list)
     design: PairedDesign | None = None
@@ -1680,6 +1925,7 @@ class EvaluationResult:
                 ),
                 "outcome_unavailable": list(self.outcome_unavailable),
                 "notes": list(self.notes),
+                "classification": [c.to_dict() for c in self.classification],
             }
         }
 
@@ -1857,7 +2103,11 @@ def evaluate_knowledge_base(
         if (summary := summarize_mechanism(design.for_outcome(outcome)))
         is not None
     ]
-
+    classification = [
+        summary
+        for condition in ("dice", "random")
+        if (summary := summarize_classification(runs, condition)) is not None
+    ]
     try:
         exploratory = run_exploratory_grid(
             design, q=q, permutation_seed=random_seed
@@ -1875,6 +2125,7 @@ def evaluate_knowledge_base(
         trend=trend,
         robustness=robustness,
         mechanism=mechanism,
+        classification=classification,
         extension_sizes=_extension_sizes(design),
         exploratory=exploratory,
         design=design if include_design else None,
