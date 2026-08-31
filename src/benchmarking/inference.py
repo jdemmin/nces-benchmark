@@ -104,7 +104,6 @@ class PairedObservation:
     depth: int | None = None
     expressivity: str | None = None
     extension_ratio: float | None = None
-    target_extension_size: int | None = None
 
     @property
     def difference(self) -> float:
@@ -127,7 +126,6 @@ class PairedObservation:
             "depth": self.depth,
             "expressivity": self.expressivity,
             "extension_ratio": self.extension_ratio,
-            "target_extension_size": self.target_extension_size,
         }
 
 
@@ -213,27 +211,18 @@ def _outcome_value(
     """Read one outcome off a per-problem result, or ``None``."""
     if result.error is not None:
         return None
-
+    
     if outcome == "hypothesis_extension_size":
-
-        metrics = result.metrics
-        if metrics is None:
+        extension = result.hypothesis_extension
+        if extension is None:
             return None
-        if result.hypothesis_extension is not None:
-            return float(result.hypothesis_extension.total)
-        # |P| is recoverable from the extension overlap: the hypothesis
-        # extension is the union minus the part of the target it missed.
-        target = result.target_extension
-        if target is None:
-            return None
-        return float(metrics.union - target.total + metrics.intersection)
+        return float(extension.positive)
 
     if outcome == "empty_hypothesis":
-        metrics = result.metrics
-        if metrics is None:
+        extension = result.hypothesis_extension
+        if extension is None:
             return None
-        size = _outcome_value(result, "hypothesis_extension_size")
-        return 1.0 if size == 0.0 else 0.0
+        return 1.0 if extension.positive == 0 else 0.0
 
     if outcome == "runtime_seconds":
         return None if result.runtime is None else float(result.runtime)
@@ -279,6 +268,10 @@ class PairedDesign:
     problem_ids: tuple[str, ...]
     unpaired_problem_ids: tuple[str, ...]
     error_counts: dict[str, int]
+
+    target_extension_sizes: dict[str, int] = field(default_factory=dict)
+    # |U|, the individual count of the knowledge base, when recoverable.
+    universe_size: int | None = None
 
     @property
     def n_observations(self) -> int:
@@ -341,6 +334,7 @@ def build_paired_design(
     }
     hypotheses: list[PairedHypotheses] = []
     error_counts: dict[str, int] = {"dice": 0, "random": 0}
+    target_extension_sizes: dict[str, int] = {}
     paired_ids: set[str] = set()
     unpaired_ids: set[str] = set()
     used_seeds: list[int] = []
@@ -375,17 +369,25 @@ def build_paired_design(
             dice_result = dice_by_id[identifier]
             random_result = random_by_id[identifier]
             complexity = _complexity_of(dice_result)
-
+            target_size = _target_extension_size(dice_result, random_result)
+            if target_size is not None:
+                previous = target_extension_sizes.get(identifier)
+                if previous is not None and previous != target_size:
+                    logger.warning(
+                        "Target extension size for %s differs across seeds "
+                        "(%s vs %s). The target concept should be "
+                        "seed-invariant; keeping the first value.",
+                        identifier,
+                        previous,
+                        target_size,
+                    )
+                else:
+                    target_extension_sizes[identifier] = target_size
             dl_length = complexity.get("dl_length")
             depth = complexity.get("depth")
             expressivity = complexity.get("expressivity")
-            extension_ratio = complexity.get("extension_ratio")
             hardness = complexity.get("hardness")
-            target_extension_size = None
-            if hardness is None:
-                target_extension_size = None
-            else:
-                target_extension_size = complexity.get("extension_size")
+            extension_ratio = hardness.get("extension_ratio") if hardness is not None else None
 
             contributed = False
             for outcome in requested:
@@ -412,16 +414,11 @@ def build_paired_design(
                             if extension_ratio is None
                             else float(extension_ratio)
                         ),
-                        target_extension_size=(
-                            None if target_extension_size is None else int(target_extension_size)
-                        ),
                     )
                 )
                 contributed = True
-
             if contributed:
                 paired_ids.add(identifier)
-
             hypotheses.append(
                 PairedHypotheses(
                     problem_id=identifier,
@@ -435,12 +432,10 @@ def build_paired_design(
                     random_hypothesis=random_result.hypothesis,
                 )
             )
-
     if not used_seeds:
         raise InferenceError(
             f"No seed of {knowledge_base} carries both embedding conditions."
         )
-
     return PairedDesign(
         knowledge_base=knowledge_base,
         observations=observations,
@@ -449,7 +444,29 @@ def build_paired_design(
         problem_ids=tuple(sorted(paired_ids)),
         unpaired_problem_ids=tuple(sorted(unpaired_ids)),
         error_counts=error_counts,
+        target_extension_sizes=target_extension_sizes,
     )
+
+
+def _target_extension_size(
+    dice_result: LearningProblemResult,
+    random_result: LearningProblemResult,
+) -> int | None:
+    """|T| for one problem, preferring the direct field.
+
+    ``TargetExtensionStructure.total`` is ``positive + negative``. Whether
+    that equals |T| or |U| depends on what ``negative`` counts, so the
+    ``positive`` field is used directly -- it is unambiguously the number
+    of individuals in the target extension.
+    """
+    for result in (dice_result, random_result):
+        extension = result.target_extension
+        if extension is None:
+            continue
+        positive = getattr(extension, "positive", None)
+        if positive is not None:
+            return int(positive)
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -1380,8 +1397,12 @@ class ExtensionSizeSummary:
     mean_hypothesis_size_dice: float
     mean_hypothesis_size_random: float
     mean_target_size: float
+    n_problems: int
+    n_problems_with_target_size: int
     dice_over_target_ratio: float
     random_over_target_ratio: float
+    mean_per_problem_dice_ratio: float
+    mean_per_problem_random_ratio: float
     empty_hypothesis_rate_dice: float
     empty_hypothesis_rate_random: float
 
@@ -1390,8 +1411,14 @@ class ExtensionSizeSummary:
             "mean_hypothesis_size_dice": self.mean_hypothesis_size_dice,
             "mean_hypothesis_size_random": self.mean_hypothesis_size_random,
             "mean_target_size": self.mean_target_size,
+            "n_problems": self.n_problems,
+            "n_problems_with_target_size": self.n_problems_with_target_size,
             "dice_over_target_ratio": self.dice_over_target_ratio,
             "random_over_target_ratio": self.random_over_target_ratio,
+            "mean_per_problem_dice_ratio": self.mean_per_problem_dice_ratio,
+            "mean_per_problem_random_ratio": (
+                self.mean_per_problem_random_ratio
+            ),
             "empty_hypothesis_rate_dice": self.empty_hypothesis_rate_dice,
             "empty_hypothesis_rate_random": self.empty_hypothesis_rate_random,
         }
@@ -1658,17 +1685,50 @@ class EvaluationResult:
 
 
 def _extension_sizes(design: PairedDesign) -> ExtensionSizeSummary | None:
+    """|P| against |T| -- the direct test of the breadth reading.
+
+    A recall-heavy, precision-flat pattern under ``dice`` predicts
+    |P_dice| > |P_random|; the ratios against |T| say whether either
+    condition systematically over- or under-generalizes.
+    """
     import numpy as np
 
     size_observations = design.for_outcome("hypothesis_extension_size")
     if not size_observations:
         return None
 
+    # Collapse to one value per problem before averaging, so that a
+    # problem surviving in more seeds does not gain weight.
+    dice_by_problem: dict[str, list[float]] = {}
+    random_by_problem: dict[str, list[float]] = {}
+    for observation in size_observations:
+        dice_by_problem.setdefault(observation.problem_id, []).append(
+            observation.dice_value
+        )
+        random_by_problem.setdefault(observation.problem_id, []).append(
+            observation.random_value
+        )
+
+    problem_ids = sorted(dice_by_problem)
     dice_sizes = np.asarray(
-        [o.dice_value for o in size_observations], dtype=float
+        [float(np.mean(dice_by_problem[p])) for p in problem_ids],
+        dtype=float,
     )
     random_sizes = np.asarray(
-        [o.random_value for o in size_observations], dtype=float
+        [float(np.mean(random_by_problem[p])) for p in problem_ids],
+        dtype=float,
+    )
+
+    # |T| is condition- and seed-invariant, so restrict it to exactly the
+    # problems that contributed a hypothesis size. Averaging over a
+    # different problem set would make the ratios incomparable.
+    target_values = [
+        float(design.target_extension_sizes[p])
+        for p in problem_ids
+        if p in design.target_extension_sizes
+    ]
+    target_mean = (
+        float(np.mean(target_values)) if target_values else float("nan")
     )
 
     empty = design.for_outcome("empty_hypothesis")
@@ -1680,17 +1740,6 @@ def _extension_sizes(design: PairedDesign) -> ExtensionSizeSummary | None:
         if empty
         else float("nan")
     )
-    target_observations = design.for_outcome("target_extension_size")
-    target_mean = (
-        float(np.mean([o.dice_value for o in target_observations]))
-        if target_observations
-        else float("nan")
-    )
-
-    # |T| is recoverable from the target extension totals carried on the
-    # primary/robustness observations; approximate via recall identity is
-    # avoided in favour of an explicit NaN when unavailable.
-    #target_mean = float("nan")
 
     def ratio(numerator: float, denominator: float) -> float:
         return (
@@ -1703,11 +1752,41 @@ def _extension_sizes(design: PairedDesign) -> ExtensionSizeSummary | None:
         mean_hypothesis_size_dice=float(dice_sizes.mean()),
         mean_hypothesis_size_random=float(random_sizes.mean()),
         mean_target_size=target_mean,
+        n_problems=len(problem_ids),
+        n_problems_with_target_size=len(target_values),
         dice_over_target_ratio=ratio(float(dice_sizes.mean()), target_mean),
         random_over_target_ratio=ratio(float(random_sizes.mean()), target_mean),
+        mean_per_problem_dice_ratio=_mean_per_problem_ratio(
+            problem_ids, dice_by_problem, design.target_extension_sizes
+        ),
+        mean_per_problem_random_ratio=_mean_per_problem_ratio(
+            problem_ids, random_by_problem, design.target_extension_sizes
+        ),
         empty_hypothesis_rate_dice=empty_dice,
         empty_hypothesis_rate_random=empty_random,
     )
+
+
+def _mean_per_problem_ratio(
+    problem_ids: Sequence[str],
+    sizes_by_problem: Mapping[str, Sequence[float]],
+    target_sizes: Mapping[str, int],
+) -> float:
+    """Mean of |P|/|T| per problem, not a ratio of means.
+
+    The two differ substantially when extension sizes are skewed, which
+    they are: a ratio of means is dominated by the largest target
+    extensions, whereas this weights every problem equally. Both are
+    reported because they answer different questions.
+    """
+    import numpy as np
+
+    ratios = [
+        float(np.mean(sizes_by_problem[p])) / float(target_sizes[p])
+        for p in problem_ids
+        if target_sizes.get(p, 0) > 0
+    ]
+    return float(np.mean(ratios)) if ratios else float("nan")
 
 
 def evaluate_knowledge_base(
