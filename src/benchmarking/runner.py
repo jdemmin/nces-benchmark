@@ -219,10 +219,11 @@ def run_single(
         ontology_parse_result: OntologyParseResult
         counts: dict[str, int]
         
-        current_data_settings_hash = _hash_data_generation_settings(config.data_generation)
-        old_data_settings_hash = _read_data_generation_settings_hash(paths.nces_data_dir)
+        current_data_settings_hash: str = _hash_data_generation_settings(config.data_generation)
+        old_data_settings_hash: str | None = _read_data_generation_settings_hash(paths.nces_data_dir)
+        has_no_ontology_parse_result: bool = old_data_settings_hash is None
         ontology_phase_result = _ontology_phase(
-            old_data_settings_hash=old_data_settings_hash,
+            has_no_ontology_parse_result=has_no_ontology_parse_result,
             kb_path=kb_path,
             knowledge_base_name=knowledge_base_name,
             paths=paths,
@@ -242,14 +243,18 @@ def run_single(
             "Completed Stage 2: Embedding generation for" \
             "all conditions and collected results."
         )
+        has_no_learning_problem_results: bool = (
+            has_no_ontology_parse_result 
+            or current_data_settings_hash != old_data_settings_hash
+        )
         learning_problem_phase_result = _gather_learning_problems_phase(
             paths=paths,
             kb_path=kb_path,
             ontology_parse_result=ontology_parse_result,
             config=config,
-            old_data_settings_hash=old_data_settings_hash,
-            current_data_settings_hash=current_data_settings_hash,
             knowledge_base_name=knowledge_base_name,
+            has_no_learning_problem_results=has_no_learning_problem_results,
+            current_data_settings_hash=current_data_settings_hash,
         )
         split = learning_problem_phase_result.split
         target_extensions = learning_problem_phase_result.target_extensions
@@ -324,7 +329,7 @@ def run_single(
 
 def _gather_learning_problems_phase(
     paths: RunPaths, 
-    old_data_settings_hash: str | None, 
+    has_no_learning_problem_results: bool,
     current_data_settings_hash: str, 
     kb_path: Path, knowledge_base_name: str, 
     ontology_parse_result: OntologyParseResult, 
@@ -332,7 +337,7 @@ def _gather_learning_problems_phase(
     ) -> LearningProblemPhaseResult:
 
     hash_file_path = paths.nces_data_dir / "data_generation_settings_hash.txt"
-    if old_data_settings_hash is not None and old_data_settings_hash == current_data_settings_hash:
+    if not has_no_learning_problem_results:
         logger.info(
             "Data generation settings have not changed." \
             "Using cached learning problems and splits."
@@ -416,10 +421,10 @@ def _gather_learning_problems_phase(
     )
 
 
-def _ontology_phase(old_data_settings_hash: str | None, kb_path: Path, knowledge_base_name: str, paths: RunPaths) -> OntologyPhaseResult:
+def _ontology_phase(has_no_ontology_parse_result: bool | None, kb_path: Path, knowledge_base_name: str, paths: RunPaths) -> OntologyPhaseResult:
     # if old data is not none we can assume that the ontology has already been parsed
-    if old_data_settings_hash is None:
-        logger.info("No previous data generation settings hash found")
+    if has_no_ontology_parse_result:
+        logger.info("No previous ontology parse results found")
         ontology_parse_result = _parse_ontology(kb_path)
         _write_json(
             payload=ontology_parse_result.to_dict(), 
