@@ -69,12 +69,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Hyperparameter optimization backend for DICE embeddings.",
     )
     parser.add_argument(
-        "--num-problems",
-        type=int,
-        default=None,
-        help="Number of learning problems to generate per knowledge base.",
-    )
-    parser.add_argument(
         "--dice-epochs", type=int, default=None, help="DICE training epochs."
     )
     parser.add_argument(
@@ -102,13 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         project = replace(project, seeds=args.seeds)
     if args.embedding_conditions:
         project = replace(project, embedding_conditions=args.embedding_conditions)
-
     data_generation = config.data_generation
-    if args.num_problems:
-        data_generation = replace(
-            data_generation, num_rand_samples=args.num_problems
-        )
-
     embedding = config.embedding
     if args.embedding_model:
         embedding = replace(embedding, model_name=args.embedding_model)

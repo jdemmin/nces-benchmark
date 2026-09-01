@@ -80,7 +80,7 @@ class DataGenerationSettings:
     ``downsample_refinements`` become ``expressivity`` and ``downsample``.
     """
 
-    kbs: str = "semantic_bible"
+    kb: str = "semantic_bible"
     num_rand_samples: int = 150
     depth: int = 2
     max_child_len: int = 10
@@ -147,14 +147,7 @@ class DataGenerationSettings:
         return kwargs
 
     @classmethod
-    def from_json(cls, path: Path | None = None) -> DataGenerationSettings:
-        try:
-            payload = _read_json(path or INPUT_DIR / "data_generation_settings.json")
-        except FileNotFoundError:
-            logger.info(
-                "data_generation_settings.json not found. Using default data generation settings."
-            )
-            return cls()
+    def from_json(cls, payload: dict[str, Any]) -> DataGenerationSettings:
         # Accept the legacy `rho` spelling: "ALCHIQD" meant beyond_alc=True.
         if "beyond_alc" in payload:
             beyond_alc = bool(payload["beyond_alc"])
@@ -169,7 +162,7 @@ class DataGenerationSettings:
 
         expressivity = float(payload.get("refinement_expressivity", 0.2))
         return cls(
-            kbs=str(payload.get("kbs", "semantic_bible")),
+            kb=str(payload.get("kbs", "semantic_bible")),
             num_rand_samples=int(payload.get("num_rand_samples", 150)),
             depth=int(payload.get("depth", 2)),
             max_child_len=int(payload.get("max_child_len", 10)),
@@ -488,7 +481,7 @@ class BenchmarkConfiguration:
     """The complete benchmark configuration for one invocation."""
 
     project: ProjectSettings
-    data_generation: DataGenerationSettings
+    data_generation: list[DataGenerationSettings]
     embedding: EmbeddingSettings
     nces: NCESSettings
     knowledge_bases: list[str]
@@ -497,19 +490,20 @@ class BenchmarkConfiguration:
     def load(cls, input_dir: Path | None = None) -> BenchmarkConfiguration:
         base = input_dir or INPUT_DIR
         project = ProjectSettings.from_json(base / "project_settings.json")
-        data_generation = DataGenerationSettings.from_json(
-            base / "data_generation_settings.json"
-        )
+
+        raw_data_gen = _read_json(base / "data_generation_settings.json")
+        data_generation_list: list[DataGenerationSettings] = []
+        knowledge_bases: list[str] = []
+        for data_generation_settings in raw_data_gen.values():
+            for setting in data_generation_settings:
+                setting = DataGenerationSettings.from_json(setting)
+                knowledge_bases.append(setting.kb)
+                data_generation_list.append(setting)
         embedding = EmbeddingSettings.from_json(base / "embedding_settings.json")
         nces = NCESSettings.from_json(base / "nces_settings.json")
-        knowledge_bases = [
-            name.strip()
-            for name in data_generation.kbs.split(",")
-            if name.strip()
-        ]
         return cls(
             project=project,
-            data_generation=data_generation,
+            data_generation=data_generation_list,
             embedding=embedding,
             nces=nces,
             knowledge_bases=knowledge_bases,
@@ -522,7 +516,7 @@ class BenchmarkConfiguration:
             "benchmark_name": self.project.benchmark_name,
             "embedding_conditions": self.project.embedding_conditions,
             "knowledge_bases": self.knowledge_bases,
-            "data_generation": vars(self.data_generation),
+            "data_generation": [vars(d) for d in self.data_generation],
             "embedding": vars(self.embedding),
             "nces": vars(self.nces),
             "split_ratios": list(SPLIT_RATIOS),

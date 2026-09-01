@@ -76,7 +76,8 @@ def run_benchmark(
     """Run every (knowledge base, seed) combination and aggregate results."""
 
     started = time.perf_counter()
-    selected_kbs = list(knowledge_bases or config.knowledge_bases)
+    selected_kbs = sorted(knowledge_bases or config.knowledge_bases)
+    data_generation_settings = sorted(config.data_generation, key=lambda d: d.kb)
     selected_seeds = list(seeds or config.project.seeds)
     base = output_dir or OUTPUT_DIR
     logger.warning(
@@ -90,6 +91,11 @@ def run_benchmark(
     failures: dict[str, KnowledgeBaseFailure] = {}
 
     for kb_name in selected_kbs:
+        data_generation_setting = next(
+            (d for d in data_generation_settings if d.kb == kb_name), None
+        )
+        if data_generation_setting is None:
+            raise ValueError(f"No data generation settings found for knowledge base {kb_name}")
         for seed in selected_seeds:
             logger.info("=== %s | seed %d ===", kb_name, seed)
             seed_everything(seed)
@@ -106,7 +112,8 @@ def run_benchmark(
                 config=config, 
                 kb_path=kb_path, 
                 kb_name=kb_name, 
-                paths=paths
+                paths=paths,
+                data_generation_setting=data_generation_setting,
             )
             try:
                 report = run_single(
@@ -150,13 +157,18 @@ def run_benchmark(
 
 
 def _generate_train_artifacts(
-        config: BenchmarkConfiguration, 
+        config: BenchmarkConfiguration,
+        data_generation_setting: DataGenerationSettings,
         kb_path: Path, 
         kb_name: str, 
         paths: RunPaths
     ):
-    current_data_settings_hash: str = _hash_data_generation_settings(config.data_generation)
-    old_data_settings_hash: str | None = _read_data_generation_settings_hash(paths.nces_data_dir)
+    current_data_settings_hash: str = _hash_data_generation_settings(
+        data_generation_settings=data_generation_setting
+    )
+    old_data_settings_hash: str | None = _read_data_generation_settings_hash(
+        paths.nces_data_dir
+    )
     has_no_ontology_parse_result: bool = old_data_settings_hash is None
     ontology_phase_result = _ontology_phase(
         has_no_ontology_parse_result=has_no_ontology_parse_result,
@@ -177,6 +189,7 @@ def _generate_train_artifacts(
         knowledge_base_name=kb_name,
         has_no_learning_problem_results=has_no_learning_problem_results,
         current_data_settings_hash=current_data_settings_hash,
+        data_generation_setting=data_generation_setting,
     )
     return ontology_phase_result, learning_problem_phase_result
 
@@ -272,6 +285,7 @@ def _gather_learning_problems_phase(
     kb_path: Path, knowledge_base_name: str, 
     ontology_parse_result: OntologyParseResult, 
     config: BenchmarkConfiguration,
+    data_generation_setting: DataGenerationSettings,
     ) -> LearningProblemPhaseResult:
     
     split: dict[str, list[LearningProblem]]
@@ -306,7 +320,7 @@ def _gather_learning_problems_phase(
         problems = generate_learning_problems(
             kb_path,
             paths.nces_data_dir,
-            config.data_generation,
+            data_generation_setting,
             seed=current_data_settings_hash,
         )
         logger.info(
