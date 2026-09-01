@@ -21,7 +21,7 @@ def test_partial_overlap_scores() -> None:
     assert metrics.precision == 0.5
     assert metrics.recall == 0.5
     assert metrics.f1 == 0.5
-    assert metrics.jaccard == pytest_approx(round(1.0 / 3, 4))
+    assert metrics.jaccard == pytest_approx(1.0 / 3, 4)
     assert metrics.semantic_equivalence is False
     # a=TP, c=FP, b=FN, d=TN -> 2/4
     assert metrics.accuracy == 0.5

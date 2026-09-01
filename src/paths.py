@@ -39,7 +39,7 @@ class RunPaths:
     seed: int
 
     @property
-    def kb_dir(self) -> Path:
+    def seed_dir(self) -> Path:
         return self.root
 
     @property
@@ -48,7 +48,7 @@ class RunPaths:
 
     @property
     def embeddings_data_dir(self) -> Path:
-        return self.embeddings_dir / "data"
+        return self.root.parent / "embeddings_data"
 
     @property
     def nces_dir(self) -> Path:
@@ -60,7 +60,11 @@ class RunPaths:
         # NCES data is now stored across the directory
         # of the seed dir so that it can be shared
         # among different seeds.
-        return self.root.parent / "data"
+        return self.root.parent / "nces_data"
+
+    @property
+    def ontology_parse_data_dir(self) -> Path:
+        return self.root.parent / "ontology_parse_data"
 
     # Might be obsolete
     @property
@@ -106,6 +110,7 @@ class RunPaths:
             self.nces_data_dir,
             self.nces_results_dir,
             self.logs_dir,
+            self.ontology_parse_data_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
 

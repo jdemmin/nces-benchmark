@@ -7,7 +7,7 @@ from typing import Any
 from ontolearn.knowledge_base import KnowledgeBase
 
 from src.config import EmbeddingSettings
-from src.data.lp import LearningProblem, LearningProblemTruncated
+from src.data.lp import LearningProblem
 from src.data.ontology import Triple
 
 
@@ -205,9 +205,10 @@ class LearningProblemResult:
     There is no way to extract it back in its full form,
     but it is not needed for the report anyway.
     """
-    learning_problem: LearningProblemTruncated
+    learning_problem: LearningProblem
     hypothesis: str = ""
     target_extension: TargetExtensionStructure | None
+    hypothesis_extension: TargetExtensionStructure | None
     metrics: MetricsResult | None
     runtime: float | None
     error: str | None
@@ -216,14 +217,16 @@ class LearningProblemResult:
         self,
         learning_problem: LearningProblem,
         target_extension: TargetExtensionStructure | None = None,
+        hypothesis_extension: TargetExtensionStructure | None = None,
         metrics: MetricsResult | None = None,
         runtime: float | None = None,
         error: str | None = None,
         hypothesis: str = "",
     ):
-        self.learning_problem = learning_problem.to_truncated()
+        self.learning_problem = learning_problem
         self.hypothesis = hypothesis
         self.target_extension = target_extension
+        self.hypothesis_extension = hypothesis_extension
         self.metrics = metrics
         self.runtime = runtime
         self.error = error
@@ -234,6 +237,8 @@ class LearningProblemResult:
         hypothesis = data.get("hypothesis", "")
         target_extension_data = data.get("target_extension")
         target_extension = TargetExtensionStructure.from_dict(target_extension_data) if target_extension_data else None
+        hypothesis_extension_data = data.get("hypothesis_extension")
+        hypothesis_extension = TargetExtensionStructure.from_dict(hypothesis_extension_data) if hypothesis_extension_data else None
         metrics_data = data.get("metrics")
         metrics = MetricsResult.from_dict(metrics_data) if metrics_data else None
         runtime = data.get("runtime")
@@ -243,9 +248,10 @@ class LearningProblemResult:
             learning_problem=learning_problem,
             hypothesis=hypothesis,
             target_extension=target_extension,
+            hypothesis_extension=hypothesis_extension,
             metrics=metrics,
             runtime=runtime,
-            error=error
+            error=error,
         )
 
     
@@ -255,6 +261,8 @@ class LearningProblemResult:
             "hypothesis": self.hypothesis,
             "target_extension": TargetExtensionStructure.to_dict(self.target_extension)
                 if self.target_extension else None,
+            "hypothesis_extension": TargetExtensionStructure.to_dict(self.hypothesis_extension)
+                if self.hypothesis_extension else None,
             "metrics": MetricsResult.to_dict(self.metrics)
                 if self.metrics else None,
             "error": self.error,
@@ -279,7 +287,6 @@ class EmbeddingResult:
     the DICE embedding method.
     """
     split_name: str
-    mean_metrics: MeanMetricsResult | None
     learning_problem_results: list[LearningProblemResult]
     number_of_problems: int
     number_of_successful_problems: int
@@ -393,8 +400,6 @@ class SingleRunResult:
     """
     knowledge_base: str
     random_embedding_result: EmbeddingResult | None
-    random_complexity_aggregates: list[ComplexityStratum] | None
-    dice_complexity_aggregates: list[ComplexityStratum] | None
     dice_embedding_result: EmbeddingResult | None
     runtime: float | None
 
@@ -543,7 +548,56 @@ class OntologyParseResult:
     all_individuals: list[str]
     triples: list[Triple]
 
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Knowledge base is omitted from the dictionary representation because it may contain
+        complex objects not easily serializable to JSON.
+        """
+        return {
+            "all_individuals": self.all_individuals,
+            "triples": [triple.as_tuple() for triple in self.triples]
+        }
 
+    @classmethod
+    def from_dict(cls, data: dict, knowledge_base: KnowledgeBase) -> "OntologyParseResult":
+        all_individuals = data.get("all_individuals", [])
+        triples_data = data.get("triples", [])
+        triples = [Triple(*triple) for triple in triples_data]
+        return cls(
+            knowledge_base=knowledge_base,  # Knowledge base is omitted in the dictionary representation
+            all_individuals=all_individuals,
+            triples=triples
+        )
+
+@dataclass(frozen=True)
+class OntologyPhaseResult:
+    ontology_parse_result: OntologyParseResult
+    counts: dict[str, int]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ontology_parse_result": self.ontology_parse_result.to_dict()
+                if self.ontology_parse_result else None,
+            "counts": self.counts
+        }
+
+@dataclass(frozen=True)
+class LearningProblemPhaseResult:
+    target_extensions: dict[str, frozenset[str]]
+    split: dict[str, list[LearningProblem]]
+    unparsed: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target_extensions": {
+                key: list(value) for key, value in self.target_extensions.items()
+            },
+            "split": {
+                key: [problem.to_dict() for problem in value] for key, value in self.split.items()
+            },
+            "unparsed": self.unparsed
+        }
+    
 @dataclass(frozen=True)
 class HardnessAnnotationResult:
     annotated_problems: list[LearningProblem]

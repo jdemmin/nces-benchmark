@@ -90,12 +90,12 @@ def calculate_extension_metrics(
     false_negative = len(target_set - predicted_set)
     true_negative = len(universe) - true_positive - false_positive - false_negative
 
-    accuracy = round(_ratio(true_positive + true_negative, len(universe)), 4)
-    precision = round(_ratio(true_positive, true_positive + false_positive), 4)
-    recall = round(_ratio(true_positive, true_positive + false_negative), 4)
-    f1 = round(_ratio(2 * precision * recall, precision + recall), 4)
+    accuracy = _ratio(true_positive + true_negative, len(universe))
+    precision = _ratio(true_positive, true_positive + false_positive)
+    recall = _ratio(true_positive, true_positive + false_negative)
+    f1 = _ratio(2 * precision * recall, precision + recall)
     union = len(predicted_set | target_set)
-    jaccard = round(_ratio(true_positive, union), 4)
+    jaccard = _ratio(true_positive, union)
     semantic_equivalence = predicted_set == target_set
 
     return ExtensionMetrics(

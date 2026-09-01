@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
@@ -13,9 +12,10 @@ from typing import Any
 import numpy as np
 
 from src.config import SPLIT_RATIOS, EmbeddingSettings
-from src.data.ontology import Triple, local_name, parse_triples
+from src.data.ontology import Triple, local_name
 from src.models.hpo_search_utils import selection_score
 from src.random_utils import seed_everything
+from src.writing_utils import write_json
 
 logger = logging.getLogger(__name__)
 
@@ -89,60 +89,65 @@ def stage_dicee_dataset(data_dir: Path, staging_root: Path) -> Path:
         "Staged DICE dataset from %s to %s (train=%d, valid=%d, test=%d)",
         data_dir,
         staged,
-        len(list((data_dir / "train.txt").open())),
-        len(list((data_dir / "valid.txt").open())),
-        len(list((data_dir / "test.txt").open())),
+        _count_lines(data_dir / "train.txt"),
+        _count_lines(data_dir / "valid.txt"),
+        _count_lines(data_dir / "test.txt"),
     )
     return staged
 
-def write_dicee_dataset(
-    triples: Sequence[Triple],
-    directory: Path,
-    *,
-    seed: int,
-    ratios: tuple[float, float, float] = SPLIT_RATIOS,
+def _count_lines(path: Path) -> int:
+    with path.open(encoding="utf-8") as handle:
+        return sum(1 for _ in handle)
+
+def count_partitions(
+    partitions: dict[str, list[tuple[str, str, str]]],
 ) -> dict[str, int]:
-    """Write ``train.txt``/``valid.txt``/``test.txt`` for ``dicee``.
+    counts = {name: len(rows) for name, rows in partitions.items()}
+    return counts
 
-    DICE consumes tab-separated triple files from a dataset directory. The
-    split is deterministic in ``seed`` so a benchmark run is reproducible.
-    """
-
+def split_dicee_dataset(
+    output_dir: Path,
+    triples: Sequence[Triple],
+    ratios: tuple[float, float, float] = SPLIT_RATIOS,
+) -> dict[str, list[tuple[str, str, str]]]:
+    """Split an existing DICE dataset into train/valid/test according to the given ratios."""
     if not triples:
         raise ValueError("Cannot build a DICE dataset from zero triples.")
 
-    # See KNOWN_ISSUES.md.
-    _assert_dicee_safe_dataset_dir(directory)
-
-    directory.mkdir(parents=True, exist_ok=True)
-    shuffled = [triple.as_tuple() for triple in triples]
+    output_dir.mkdir(parents=True, exist_ok=True)
+    sorted_tuple = [triple.as_tuple() for triple in triples]
     # random.Random(seed).shuffle(shuffled)
 
-    total = len(shuffled)
+    total = len(sorted_tuple)
     n_train = max(1, int(total * ratios[0]))
     n_valid = int(total * ratios[1])
     if n_train + n_valid >= total:
         n_valid = max(0, total - n_train - 1)
 
     partitions = {
-        "train": shuffled[:n_train],
-        "valid": shuffled[n_train : n_train + n_valid],
-        "test": shuffled[n_train + n_valid :],
+        "train": sorted_tuple[:n_train],
+        "valid": sorted_tuple[n_train : n_train + n_valid],
+        "test": sorted_tuple[n_train + n_valid :],
     }
     # DICE requires non-empty validation/test files when eval_model spans them.
     for name in ("valid", "test"):
         if not partitions[name]:
             partitions[name] = partitions["train"][:1]
 
-    for name, rows in partitions.items():
-        path = directory / f"{name}.txt"
-        with path.open("w", encoding="utf-8") as handle:
-            for subject, predicate, obj in rows:
-                handle.write(f"{subject}\t{predicate}\t{obj}\n")
+    logger.info("Split DICE dataset in %s.", output_dir)
+    return partitions
 
-    counts = {name: len(rows) for name, rows in partitions.items()}
-    logger.info("Wrote DICE dataset to %s (%s)", directory, counts)
-    return counts
+def stage_partition(
+    output_dir: Path,
+    partitions: dict[str, list[tuple[str, str, str]]],
+):
+    # See KNOWN_ISSUES.md.
+    _assert_dicee_safe_dataset_dir(output_dir)
+    for name, rows in partitions.items():
+            path = output_dir / f"{name}.txt"
+            with path.open("w", encoding="utf-8") as handle:
+                for subject, predicate, obj in rows:
+                    handle.write(f"{subject}\t{predicate}\t{obj}\n")
 
 
 def train_embedding_model(
@@ -245,7 +250,6 @@ def export_entity_embeddings(
     output_path: Path,
     *,
     use_local_names: bool = True,
-    expected_dim: int | None = None,
 ) -> Path:
     """Export DICE entity embeddings to the CSV schema NCES expects.
 
@@ -319,8 +323,21 @@ def generate_random_embeddings(
     return output_path
 
 
+@dataclass(frozen=True)
+class BestReport:
+    best_settings: EmbeddingSettings
+    report: dict[str, Any]
+    validation_error: str | None
+
+    def to_dict(self):
+        return {
+            "best_settings": self.best_settings.to_dict(),
+            "report": self.report,
+            "validation_error": self.validation_error
+        }
+
+
 def build_embeddings(
-    kb_path: Path,
     embeddings_dir: Path,
     data_dir: Path,
     embedding_settings: EmbeddingSettings,
@@ -328,6 +345,8 @@ def build_embeddings(
     seed: int,
     embedding_conditions: Sequence[str],
     nces_embedding_dim: int,
+    triples: list[Triple],
+    counts: dict[str, int],
 ) -> tuple[dict[str, EmbeddingResultDice], int]:
     """Run the full embedding stage for every requested condition.
 
@@ -336,9 +355,6 @@ def build_embeddings(
     vocabulary and the selected dimensionality but never trains.
     """
     
-    triples = parse_triples(kb_path, seed=seed)
-    counts = write_dicee_dataset(triples, data_dir, seed=seed)
-
     entity_names = sorted(
         {triple.subject for triple in triples} | {triple.object for triple in triples}
     )
@@ -347,25 +363,30 @@ def build_embeddings(
 
     if "dice" in embedding_conditions:
         seed_everything(seed)
-        best, report, trials, validation_error, run_dir = search_best_embedding_setting(
+        best_settings, report, trials, validation_error, run_dir = search_best_embedding_setting(
             data_dir, embeddings_dir, embedding_settings, seed=seed
         )
-        _write_json(
-            {
-                "best": best.to_dict(),
-                "report": report,
-                "validation_error": validation_error,
-            },
+        write_json(
+            BestReport(
+                best_settings=best_settings, 
+                report=report, 
+                validation_error=validation_error
+            ),
             embeddings_dir / "best_report.json",
         )
-        chosen = best
-        output_path = embeddings_dir / f"{best.model_name}.csv"
-        export_entity_embeddings(run_dir, output_path, expected_dim=nces_embedding_dim)
-        # _cleanup_run_dir(run_dir)
-        logger.info("Cleaned up DICE run directory %s after exporting embeddings", run_dir)
+        chosen = best_settings
+        output_path = embeddings_dir / f"{best_settings.model_name}.csv"
+        export_entity_embeddings(
+            run_dir, 
+            output_path, 
+        )
+        logger.info(
+            "Cleaned up DICE run directory %s after exporting embeddings", 
+            run_dir
+        )
         score, _ = selection_score(report)
         results["dice"] = EmbeddingResultDice(
-            embedding_settings=best,
+            embedding_settings=best_settings,
             score=score,
             metrics={
                 section: report[section]
@@ -380,7 +401,7 @@ def build_embeddings(
             "DICE embedding completed: %d entities, dim=%d, score=%.4f, "
             "validation_error=%s",
             len(entity_names),
-            best.embedding_dim,
+            best_settings.embedding_dim,
             score,
             validation_error,
         )
@@ -418,7 +439,7 @@ def build_embeddings(
         )
 
     report_path = embeddings_dir / "embedding_report.json"
-    _write_json(
+    write_json(
         {
             "triple_counts": counts,
             "num_entities": len(entity_names),
@@ -430,12 +451,6 @@ def build_embeddings(
     )
     return results, csv_dim
 
-def _write_json(data: dict, path: Path) -> None:
-    """Write a JSON file with indentation and a trailing newline."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2)
-        handle.write("\n")
 
 def _entity_embedding_matrix(model: Any) -> np.ndarray:
     """Return the dense entity-embedding matrix from a loaded ``KGE``.

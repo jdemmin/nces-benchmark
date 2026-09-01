@@ -207,8 +207,8 @@ the module or the model family, write DICE.
 | `src/models/dice_grid_search.py` | Hyperparameter search via grid search. |
 | `src/models/hpo_search_utils.py` | Helper class for hyperparameter search. |
 | `src/models/nces.py` | NCES training-data preparation, training, and hypothesis evaluation. |
+| `src/benchmarking/inference` The evaluation stage: paired design assembly, the crossed mixed model, the complexity trend, the nonparametric robustness layer, and the BH-screened exploratory grid. |
 | `src/benchmarking/metrics.py` | Extension-based metric calculation and complexity aggregation. |
-| `src/benchmarking/wilcoxon` | Class which performs Wilcoxon signed rank tests on pairs of learning problems and their results. |
 | `src/benchmarking/runner.py` | The **orchestrator**: coordinates every stage across knowledge bases, seeds, and conditions. |
 | `src/__main__.py` | The `nces-benchmark` CLI entry point. |
 
@@ -274,10 +274,6 @@ raw output to `LPs.json`, and the project then normalizes that output into the
 canonical schema below — expanding local names back to full IRIs and rejecting
 degenerate problems.
 
-> **Why `LPGen` and not `LearningProblemGenerator`?** The lower-level
-> `LearningProblemGenerator.get_examples()` is broken upstream; see
-> `KNOWN_ISSUES.md`. Going through `LPGen` avoids the defect entirely, because
-> `LPs.json` already contains materialized example sets.
 
 ### Settings
 
@@ -395,6 +391,9 @@ All ratios return `0.0` on an empty denominator rather than raising.
 
 Per-problem fields in a report's `results` array:
 
+> Note: The final result returned does not look like this anymore. While the
+> fields and there content are still relevant this section needs to be updated.
+
 | Field | Contents |
 | --- | --- |
 | `id`, `target_concept`, `complexity` | Copied from the learning problem. |
@@ -402,12 +401,13 @@ Per-problem fields in a report's `results` array:
 | `num_pos` / `num_neg` | Counts of the *sampled* examples. |
 | `target_positive_count` / `target_negative_count` | Counts over the *full* target extension — not the sampled examples. |
 | `target_extension_size` | Object with `positive`, `negative`, `total`. |
-| `target_extension_overlap` | Object with `intersection`, `union`, `jaccard`, `precision`, `recall`. |
 | `accuracy`, `precision`, `recall`, `f1`, `jaccard`, `semantic_equivalence` | The metrics above. |
 | `runtime_seconds` | Wall-clock time for this problem. |
 | `error` | Present only if NCES raised; the problem is then excluded from aggregates. |
 | `complexity`	| The full complexity object, copied from the learning problem.
 | `lift` | f1 minus atomic_baseline_f1. Negative when the hypothesis underperforms the best atomic class.
+| `mcc` | Split into mean MCC and pooled MCC. Divergence between them indicates the embedding effect is concentrated in
+problems of a particular size.|
 
 Run-level and embedding-level fields:
 
@@ -424,15 +424,377 @@ abort.
 
 ---
 
-## 7. Output layout
+## 7. Evaluation and inference
+
+Sections §6 and §7 describe two different things and the distinction is the
+whole point of this section.
+Metrics (§6) are descriptive: they score one hypothesis against one
+target extension, per problem, per condition. Evaluation is
+inferential: it takes those scores across every problem and seed and
+produces an estimate, an interval, and a verdict about the embedding
+condition. Metrics answer "how good was this hypothesis"; evaluation answers
+"does dice beat random, and by how much".
+Evaluation is implemented in src/benchmarking/inference.py and consumes
+SingleRunResult objects — the same reports written under nces/. It reads
+artifacts; it never re-runs the learner.
+
+> Naming note. The stage is called evaluation, and the module is
+> inference.py. "Evaluation" names the pipeline stage and its artifact;
+> "inference" names the statistical machinery inside it. Do not call this
+> stage "analysis", "statistics", or "significance testing", and do not
+> confuse it with NCES evaluation (§4, stage 7), which is per-problem
+> scoring. When ambiguity is possible, write inferential evaluation or
+> NCES evaluation explicitly.
+
+
+### 7.1 Unit of analysis
+
+  - ``Atomic observation`` — one (learning problem, seed) pair for one
+  outcome. This is the unit of analysis for the entire evaluation stage.
+  Never "sample" or "data point".
+  - ``Paired difference`` — the response variable, always
+  \(d_{ij} = m^{\text{dice}}_{ij} - m^{\text{random}}_{ij}\) for problem
+  \(i\), seed \(j\), and outcome \(m\). Differencing cancels the target
+  concept, examples, split, knowledge base, NCES architecture, and seed
+  shared by the two conditions, which is exactly the isolation the
+  benchmark's design claims. Always "paired difference", never "delta",
+  "gap", or "improvement".
+- ``Paired observation`` — the serialized record of one atomic observation:
+  both conditions' values plus the complexity fields needed to bucket or
+  regress it. The PairedObservation dataclass.
+- ``Paired hypotheses`` — both conditions' hypothesis strings for one
+  (problem, seed) pair, stored side by side. The PairedHypotheses
+  dataclass. Enables the zero-difference count and per-concept inspection
+  without re-running anything.
+- ``Paired design`` — every paired observation for one knowledge base, across
+  all outcomes, plus the paired hypotheses, the seeds and problems that
+  survived pairing, and the failure counts. The PairedDesign dataclass.
+- ``Join key`` — the learning problem's id. Learning-problem generation and
+  splitting are seed-independent (§5), so a problem's id identifies the same
+  target concept in every seed, which is what makes the per-problem random
+  intercept estimable.
+- ``Pairing`` — matching a dice result to a random result by join key
+  within one seed. A problem contributes an observation for a given outcome
+  only when both conditions produced a usable value for it.
+- ``Unpaired problem`` — a problem present in one condition but not the other.
+  Recorded in unpaired_problem_ids; excluded from every estimate.
+
+## 7.2 Outcome hierarchy
+
+The set of outcomes is pre-specified — fixed before the numbers are seen.
+This is what keeps the multiplicity problem small, and it is why the layer
+names are part of the vocabulary rather than an implementation detail.
+
+| Layer | Outcome(s) | Role |
+| --- | --- | --- |
+| **Primary outcome** | `lift` | Confirmatory. The single headline claim. |
+| **Confirmatory secondary** | `lift` trend in `dl_length` | Confirmatory. Does the advantage grow with complexity? |
+| **Mechanism outcomes** | `precision`, `recall`, `hypothesis_extension_size` | Descriptive. Never tested confirmatorily. |
+| **Robustness outcome** | `lift`, nonparametrically | Agreement check against the primary. Not a second primary. |
+| **Exploratory outcomes** | `mcc`, `accuracy`, `jaccard`, `semantic_equivalence`, crossed with the bucketings | Screening only. BH-screened, labeled exploratory. |
+
+- ``Confirmatory`` — pre-specified, tested, and permitted to support a claim.
+  Exactly two coefficients per knowledge base carry this status: \(\beta_0\)
+  and \(\beta_1\).
+- ``Descriptive`` — reported without a p-value, to interpret the confirmatory
+  result. The mechanism layer deliberately carries no test.
+- ``Exploratory`` — screened, not claimed. Every exploratory finding is
+  labeled "role": "exploratory" in the artifact.
+  Why lift and not f1 is primary: lift is ``F1`` minus ``atomic baseline F1``, so
+  it is the only outcome that distinguishes learning from recovering a good
+  atomic class. Why the others are demoted:
+- ``Jaccard`` is not a separate outcome. \(J = F1 / (2 - F1)\) for a fixed
+  pair of sets, so testing both tests one thing twice. It stays in the
+  exploratory layer.
+- ``Accuracy`` is not a headline. Scored over all of \(U\) including true
+  negatives, it is dominated by true negatives whenever extension_ratio is
+  small. Reported, never claimed on.
+- ``Semantic equivalence`` is a rate, not a score. It is handled as a
+  proportion via paired McNemar, not with Wilcoxon.
+
+### 7.3 Primary analysis — the crossed mixed model
+
+The primary estimate comes from an intercept-only crossed random-effects
+model on paired differences, fit per knowledge base:
+\(d_{ij} = \beta_0 + u_{\text{seed}(j)} + u_{\text{problem}(i)} + \varepsilon_{ij}\)
+
+| Term | Name | Meaning |
+| --- | --- | --- |
+| \(\beta_0\) | **mean embedding effect** | The headline estimate. Always reported with an interval. |
+| \(u_{\text{seed}(j)}\) | **seed random intercept** | Absorbs DICE/SMAC/NCES training variance shared by every problem in a run. Omitting it treats \(n_{\text{seeds}} \times \lvert\text{test}\rvert\) observations as independent and yields anticonservative p-values. |
+| \(u_{\text{problem}(i)}\) | **problem random intercept** | Absorbs concept-level heterogeneity persisting across seeds. Estimable only because the join key is seed-invariant. |
+| \(\varepsilon_{ij}\) | residual | — |
+
+- ``Crossed`` — seeds and problems are crossed, not nested: every problem
+  appears under every seed. Never "nested".
+- ``Variance decomposition`` — the triple
+  (var_seed, var_problem, var_residual). This is a result, not
+  diagnostics: var_problem ≫ var_seed means the advantage varies more
+  across concepts than across training runs, which tells a reader whether a
+  single run is trustworthy.
+- ``REML`` — restricted maximum likelihood, the fitting method.
+  _profile_reml optimizes the profiled REML criterion over the two variance
+  ratios \((\sigma^2_{\text{seed}}/\sigma^2_\varepsilon,\;
+  \sigma^2_{\text{problem}}/\sigma^2_\varepsilon)\) by Nelder–Mead from four
+  starts, then back-solves the generalized least-squares estimate.
+- ``Marginal covariance`` — \(V = \sigma^2_{\text{seed}} Z_s Z_s^\top +
+  \sigma^2_{\text{problem}} Z_p Z_p^\top + \sigma^2_\varepsilon I\). Dense
+  but tiny at benchmark scale, so it is formed and factorized directly rather
+  than exploiting sparsity.
+- ``Denominator degrees of freedom`` — deliberately conservative:
+  \(\min(n_{\text{seeds}} - 1,\, n_{\text{problems}} - 1)\), reported as
+  df_method: "satterthwaite-conservative". With five seeds the seed
+  variance is poorly estimated and the naive \(n - 1\) is far too optimistic.
+- ``Reduced fit`` — when the design cannot identify two variance components
+  (fewer than two seeds or two problems), the model degrades to a paired
+  t-interval and says so via df_method: "naive-t" and a note. This is
+  reported, not raised.
+
+### 7.4 Interval agreement
+
+Because lift differences are bounded and spike at zero, the model-based
+interval is not trusted on its own.
+- ``Model-based interval (ci95)`` — the t-interval from \(\beta_0\) and its
+  standard error, on the conservative degrees of freedom.
+- ``Cluster bootstrap interval (bootstrap_ci95)`` — a percentile bootstrap
+  in which the seed is the resampling unit. Whole seeds are resampled with
+  replacement, preserving the within-run dependence that the seed random
+  intercept exists to absorb. Never resample individual observations.
+- ``Agreement`` — whether the two intervals reach the same
+  zero-exclusion verdict. One of agree, disagree-trust-bootstrap, or
+  bootstrap-unavailable. The name encodes the rule: on disagreement, the
+  bootstrap wins, and the conjunction verdict (§7.9) uses it.
+
+### 7.5 Confirmatory secondary — the complexity trend
+\(d_{ij} = \beta_0 + \beta_1\,(\text{dl\_length}_i - \overline{\text{dl\_length}}) + \varepsilon_{ij}\)
+
+- ``Trend predictor`` — dl_length, always centered. Centering is
+  required, not cosmetic: uncentered, \(\beta_0\) is the effect at length
+  zero, which does not exist. The artifact names the predictor
+  dl_length_centered for exactly this reason.
+
+- ``Complexity trend`` (\(\beta_1\)) — change in the embedding effect per
+  additional DL token. \(\beta_1 > 0\): embeddings help more on complex
+  concepts. \(\beta_1 < 0\): more on simple ones. \(\approx 0\): flat.
+- ``Contiguous predictor`` — dl_length is never binned. Binning discards
+  information, costs power, makes the boundaries an arbitrary forking path,
+  and reintroduces the very multiplicity the trend test exists to remove.
+- ``Cluster-robust standard error`` — the trend is fit by OLS with a CR1
+  cluster-robust covariance, clustered on seed. A pragmatic stand-in for the
+  full crossed model with a slope: the point estimate coincides with the
+  mixed-model fixed effect under balance, and clustering keeps the standard
+  error honest about within-run dependence. df = n_clusters - 1.
+- ``Trend covariate`` — extension_ratio, added in a second fit. This
+  addresses a real confound: longer concepts tend to have smaller extensions,
+  and small extensions destabilize F1.
+- ``Survives covariate adjustment`` — true when the adjusted interval still
+  excludes zero and the adjusted slope keeps the sign of the unadjusted
+  one. Both conditions, not just the p-value.
+- ``Unidentified slope`` — when dl_length is constant across paired
+  problems, the slope does not exist; the result carries NaN and a note
+  rather than a number.
+
+### 7.6 Robustness layer
+
+The nonparametric agreement check. Two steps, in order:
+- ``Collapse over seeds`` — average each problem's paired difference across
+  its seeds, yielding one value per problem. Reduces per-problem noise by
+  roughly \(\sqrt{n_{\text{seeds}}}\) and makes the across-problem
+  independence assumption defensible. Always "collapse over seeds", never
+  "pool".
+- ``Wilcoxon signed-rank with Pratt zeros`` — zero_method="pratt". Ties at
+  exactly zero are common here because NCES frequently synthesizes the
+  identical hypothesis under both conditions. Wilcoxon's original rule
+  discards zeros before ranking and thereby inflates the remaining ranks;
+  Pratt ranks the zeros, then drops them from the sum.
+- ``Sign-flip null`` — the p-value comes from flipping the signs of the
+  observed differences, not from the asymptotic normal approximation, which is
+  unreliable with a large zero mass and few nonzero observations. Enumerated
+  exactly at \(n \le 20\) (exact-signflip), Monte Carlo above
+  (monte-carlo-signflip).
+- ``Hodges–Lehmann estimator`` — the median of pairwise Walsh averages; the
+  effect size that matches the Wilcoxon test. Reported alongside the mean
+  difference, because a significant Wilcoxon with a near-zero mean is possible
+  when the zero mass is large and the nonzero tails are asymmetric.
+- ``Sign test`` — an assumption-light binomial check on the nonzero
+  differences.
+
+- ``Win / loss / tie triple`` — the immediately interpretable summary, e.g.
+  "dice wins 84, loses 41, ties 120".
+- ``Zero fraction (n_zero / n_total)`` — a result, not diagnostics. It
+  is the fraction of problems where the embedding condition changed nothing
+  about the score. When it is large, "embeddings rarely alter NCES's output,
+  but when they do it is usually an improvement" is a sharper finding than any
+  p-value.
+- ``Identical-hypothesis fraction`` — the fraction of paired hypotheses whose
+  strings are byte-identical. The stronger sibling of the zero fraction:
+  identical scores can arise from different expressions, identical strings
+  cannot.
+- ``Degenerate contrast`` — every paired difference exactly zero. Reported
+  with null: "degenerate" and \(p = 1\); no test is meaningful.
+
+### 7.7 Mechanism layer
+
+Descriptive characterization of how embeddings alter hypotheses. It exists
+to interpret the primary result — for instance to test the "broader
+hypotheses" reading of a recall-heavy, precision-flat pattern — not to
+generate additional claims. It deliberately carries no p-value.
+
+- ``Mechanism summary`` — per outcome: mean under each condition, mean paired
+  difference, Hodges–Lehmann estimate, and the win/loss/tie triple.
+- ``Extension size summary`` — \(\lvert P \rvert\) against \(\lvert T \rvert\),
+  the direct test of the breadth reading. Both a ratio of means
+  (dice_over_target_ratio) and a mean of per-problem ratios
+  (mean_per_problem_dice_ratio) are reported: extension sizes are skewed, so
+  the former is dominated by the largest target extensions while the latter
+  weights every problem equally. They answer different questions.
+- ``Empty-hypothesis rate`` — how often \(\lvert P \rvert = 0\). A clean
+  failure mode; a reduction under dice is a result.
+- ``Classification summary`` — per condition, the pooled confusion matrix
+  reconstructed from the per-problem result fields, with two MCC figures:
+	- ``mean MCC`` — weights every learning problem equally; the quantity the
+    paired analysis operates on.
+	- ``pooled MCC`` — computed from the summed confusion matrix; dominated by
+    problems with large extensions.
+  Divergence between them indicates the embedding effect is concentrated in
+  problems of a particular size.
+- ``Confusion matrix`` — reconstructed per problem as
+  \(TP = \lvert P \cap T \rvert\), \(FP = \lvert P \rvert - TP\),
+  \(FN = \lvert T \rvert - TP\), \(TN = \lvert U \rvert - TP - FP - FN\), with
+  \(\lvert U \rvert\) taken from target_extension.total. A matrix with any
+  negative cell is inconsistent: it is logged and skipped, not clamped.
+- ``Matthews correlation coefficient (mcc)`` — the skew-robust
+  classification metric, in \([-1, 1]\):
+  \(\mathrm{MCC} = \frac{TP \cdot TN - FP \cdot FN}{\sqrt{(TP+FP)(TP+FN)(TN+FP)(TN+FN)}}\)
+  Computed in log space, because the denominator is a product of four
+  marginals each as large as the knowledge base and that product overflows
+  float64 on vicodi well before the individual counts get large. Returns
+  0.0 when any marginal is zero — the conventional degenerate-case
+  definition, matching scikit-learn. Note that mcc sits in the
+  exploratory layer as an outcome, while the classification summary that
+  reports it is mechanism.
+
+### 7.8 Exploratory grid and multiplicity
+
+- ``Exploratory grid`` — the cross product of exploratory outcomes ×
+  bucketings × buckets, plus one unbucketed cell per outcome. Each cell is one
+  exploratory finding.
+- ``Bucketing`` — a complexity field used to partition observations:
+  depth, expressivity, or extension_ratio. The extension_ratio
+  bucketing is the only legitimate binning in the evaluation, because
+  there it is a degeneracy indicator rather than a contiguous predictor being
+  tested for trend. Its edges are fixed at
+  \[0.00,0.05\) \[0.05,0.25\) \[0.25,0.75\) \[0.75,0.95\) \[0.95,1.00\].
+- ``Minimum cell size`` — a bucket with fewer than five collapsed problems is
+  skipped, not reported with a meaningless interval.
+- ``Benjamini–Hochberg screening`` — step-up FDR control at \(q = 0.10\) over
+  the whole exploratory family. FDR rather than family-wise error, because
+  family-wise control over a grid this size is self-defeating when the goal is
+  screening.
+- ``Discovery`` — an exploratory finding whose BH-adjusted p-value is at or
+  below \(q\). A discovery is a candidate for follow-up, never a claim.
+  The adjustment policy, in full:
+
+| Comparison set | Adjustment |
+| --- | --- |
+| Primary \(\beta_0\), across knowledge bases | **None.** The claim is a conjunction, not a disjunction; requiring simultaneous rejection everywhere is already conservative, and correcting a conjunction makes it needlessly weaker. |
+| Confirmatory \(\beta_1\) | **None.** One pre-specified coefficient per knowledge base. |
+| Exploratory grid | Benjamini–Hochberg at \(q = 0.10\). |
+
+> ``Holm`` appears nowhere in the confirmatory path. That is the point of the
+> hierarchy: replacing \(k\) per-bucket tests with one trend coefficient
+> removes the multiplicity rather than correcting for it.
+
+### 7.9 Verdicts and artifacts
+
+- ``Evaluation result`` — the inferential result for one knowledge base:
+  the primary estimate, the trend, the robustness layer, the mechanism and
+  classification summaries, the extension sizes, the exploratory findings, and
+  optionally the paired design itself.
+- ``Suite evaluation`` — evaluation results across every knowledge base, plus
+  the conjunction verdict.
+- ``Conjunction claim`` — the confirmatory claim is "dice beats random on
+  every knowledge base". It is a conjunction, which is why no correction
+  is applied across knowledge bases.
+- ``Conjunction verdict (conjunction_holds)`` — true only when every
+  knowledge base's chosen interval lies strictly above zero. The chosen
+  interval is the bootstrap one when agreement == "disagree-trust-bootstrap",
+  otherwise the model-based one. A knowledge base with no estimable primary
+  counts as a failure, not as a skip.
+- ``Conjunction statement`` — the human-readable form, e.g. "dice > random on
+  3/4 knowledge bases (95% interval excluding zero). Conjunction does not
+  hold." All results are reported regardless of outcome.
+- ``Outcome unavailable`` — an outcome the design could not supply at all. The
+  canonical case: lift requires atomic_baseline_f1 from the hardness
+  annotation stage, and without it the primary does not run. The evaluation
+  then falls back to reporting the robustness layer in its place and records
+  the substitution in notes.
+- ``Notes`` — free text recording every layer that could not be estimated.
+  Every layer is guarded independently: a failed layer is noted and the
+  remaining layers still run, consistent with the suite's design to finish and
+  report rather than abort.
+- ``Evaluation artifact`` — the JSON emitted by write_evaluation, sitting
+  next to the descriptive summaries so the analysis is auditable and the
+  family of tests is explicit.
+- ``Paired-observations artifact`` — the optional second file holding every
+  paired observation and every paired-hypothesis record. Worth persisting
+  separately: it is the evaluation's input, and it enables per-concept
+  inspection without re-running anything.
+
+### 7.10 Failure semantics
+
+The evaluation stage distinguishes three kinds of shortfall, and the
+vocabulary keeps them apart:
+
+| Situation | Handling | Recorded as |
+| --- | --- | --- |
+| No runs at all, or no seed carrying both conditions | `InferenceError` — the paired design cannot be assembled | exception |
+| A layer cannot be estimated (unidentified slope, too few observations, optimizer failure) | The layer is skipped; the rest still runs | `notes`, `note`, `outcome_unavailable` |
+| A single problem failed under NCES | Excluded from every aggregate | `error_counts` |
+
+> ``InferenceError`` is raised only when the paired design itself is
+> impossible. Everything downstream degrades and reports.
+
+### 7.11 Evaluation naming rules
+
+Extends §10.
+
+| Write this | Not this | Why |
+| --- | --- | --- |
+| evaluation stage | analysis, statistics stage | Names the pipeline stage. |
+| inferential evaluation | evaluation | When NCES evaluation could be meant. |
+| paired difference | delta, gap, improvement, gain | The response variable. |
+| atomic observation | sample, data point | The unit of analysis. |
+| paired design | dataset, matrix | The assembled input. |
+| primary outcome | main metric | Exactly one: `lift`. |
+| confirmatory / exploratory | significant / not significant | Names the layer, not the result. |
+| mean embedding effect | effect, difference | \(\beta_0\), fully qualified. |
+| complexity trend | slope, interaction | \(\beta_1\) on centered `dl_length`. |
+| seed / problem random intercept | random effect | Always say which. |
+| variance decomposition | variance diagnostics | It is a result. |
+| collapse over seeds | pool, aggregate | The specific averaging step. |
+| zero fraction | tie rate, no-op rate | It is a result. |
+| identical-hypothesis fraction | same-output rate | The stronger sibling of the zero fraction. |
+| discovery | finding, significant result | A BH-screened candidate, never a claim. |
+| conjunction verdict | overall result, pass/fail | The claim is a conjunction. |
+| cluster bootstrap | bootstrap | The seed is the resampling unit. |
+| Pratt zeros | zero handling | The specific rule. |
+| Hodges–Lehmann estimator | median difference | It is not the median of the differences. |
+| mean MCC / pooled MCC | MCC | They differ and the difference is informative. |
+
+---
+
+## 8. Output layout
 
 ```text
 Output/
 └── <benchmark_name>/                      e.g. benchmark1
     ├── benchmark_summary.json             aggregate across all knowledge bases
-    ├── <knowledge_base>_summary.json      aggregate across seeds, one KB
+    ├── evaluation.json                    aggregate across seeds, one KB
     └── <knowledge_base>/
-        ├── data/                          learning problems and splits
+        ├── embeddings_data/               splits
+        ├── nces_data/                     learning problems and splits, data settings hash
+        ├── ontology_parse_data/           triples and all individuals of a KB
         └── seed<N>/
             ├── embeddings/
             │   ├── <Model>.csv            trained DICE entity embeddings
@@ -448,7 +810,7 @@ Output/
             │       ├── dice/              weights, dice condition
             │       └── random/            weights, random condition
             └── logs/
-                └── <knowledge_base>.log
+                └── <knowledge_base>_<seed>.log
 ```
 
 - **`embeddings/data/`** holds the RDF-triple split for DICE.
@@ -459,7 +821,7 @@ Output/
 
 ---
 
-## 8. Reference parameter values
+## 9. Reference parameter values
 
 ### NCES
 
@@ -543,7 +905,7 @@ Every flag overrides the corresponding settings file.
 
 ---
 
-## 9. Naming rules
+## 10. Naming rules
 
 Apply these in code, identifiers, log messages, JSON keys, and prose.
 
@@ -577,7 +939,7 @@ Apply these in code, identifiers, log messages, JSON keys, and prose.
 
 ---
 
-## 10. Quick reference
+## 11. Quick reference
 
 | Term | One-line definition |
 | --- | --- |
@@ -600,7 +962,8 @@ Apply these in code, identifiers, log messages, JSON keys, and prose.
 | Artifact | Any generated file. |
 | Report / Summary | Per-run result / cross-run aggregate. |
 
-## 11. Schema versions
+## 12. Schema versions
 Learning-problem schema v1 — `complexity` is an integer, the DL-expression length.
 v2 — `complexity` is an object; the v1 integer survives as complexity.dl_length.
 v3 — no backwards compatibility for `complexity`. It is a pure multi-dimensional object.
+v4 — Now contains inference evaluation section

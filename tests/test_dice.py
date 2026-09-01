@@ -15,10 +15,12 @@ from src.models.dice import (
     _assert_dicee_safe_dataset_dir,
     _entity_index_mapping,
     build_embeddings,
+    count_partitions,
     generate_random_embeddings,
     get_csv_dimension,
     search_best_embedding_setting,
-    write_dicee_dataset,
+    split_dicee_dataset,
+    stage_partition,
 )
 from src.models.hpo_search_utils import best_trial_run_dir, selection_score
 
@@ -72,13 +74,14 @@ def test_embedding_report_is_written(
     embeddings_dir = tmp_path / "clean" / "emb"
     monkeypatch.setattr("src.models.dice.get_csv_dimension", lambda *a, **k: 64)
     build_embeddings(
-        kb_path,
-        embeddings_dir,
-        tmp_path / "clean" / "data",
-        base_settings,
+        embeddings_dir=embeddings_dir,
+        data_dir=embeddings_dir,
+        embedding_settings=base_settings,
         seed=1,
         embedding_conditions=["random"],
         nces_embedding_dim=64,
+        triples=[Triple("s", "p", "o"), Triple("s2", "p2", "o2"), Triple("s3", "p3", "o3")],
+        counts={ "train": 0, "valid": 0, "test": 0 }
     )
     payload = json.loads(
         (embeddings_dir / "embedding_report.json").read_text(
@@ -383,9 +386,9 @@ def test_section_without_mrr_is_skipped() -> None:
 
 def test_split_respects_ratios_on_large_input() -> None:
     triples = [Triple(f"s{i}", "p", f"o{i}") for i in range(1000)]
-    counts = write_dicee_dataset(
-        triples, Path(tempfile.mkdtemp()) / "clean" / "d", seed=7
-    )
+    counts = count_partitions(split_dicee_dataset(
+        triples=triples, output_dir=Path(tempfile.mkdtemp()) / "clean" / "d"
+    ))
     assert sum(counts.values()) == 1000
     assert counts["train"] == 800
     assert counts["valid"] == 100
@@ -397,32 +400,28 @@ def test_split_is_deterministic_in_seed() -> None:
     tmp_path = Path(tempfile.mkdtemp())  # otherwise test prefix would trigger dicee path check
     first = tmp_path / "clean" / "a"
     second = tmp_path / "clean" / "b"
-    write_dicee_dataset(triples, first, seed=3)
-    write_dicee_dataset(triples, second, seed=3)
+    stage_partition(
+        output_dir=first,
+        partitions=split_dicee_dataset(triples=triples, output_dir=first)
+    )
+    stage_partition(
+        output_dir=second,
+        partitions=split_dicee_dataset(triples=triples, output_dir=second)
+    )
     for name in ("train", "valid", "test"):
         assert (first / f"{name}.txt").read_text(
             encoding="utf-8"
         ) == (second / f"{name}.txt").read_text(encoding="utf-8")
 
 
-# Splits are constant across seeds, but the assignment of triples to splits is random.
-# def test_different_seeds_produce_different_splits() -> None:
-#     triples = [Triple(f"s{i}", "p", f"o{i}") for i in range(200)]
-#     tmp_path = Path(tempfile.mkdtemp())  # otherwise test prefix would trigger dicee path check
-#     a = tmp_path / "clean" / "a"
-#     b = tmp_path / "clean" / "b"
-#     write_dicee_dataset(triples, a, seed=1)
-#     write_dicee_dataset(triples, b, seed=2)
-#     assert (a / "train.txt").read_text(encoding="utf-8") != (
-#         b / "train.txt"
-#     ).read_text(encoding="utf-8")
-
-
 def test_splits_partition_the_input_without_loss() -> None:
     triples = [Triple(f"s{i}", "p", f"o{i}") for i in range(100)]
     tmp_path = Path(tempfile.mkdtemp())  # otherwise test prefix would trigger dicee path check
     directory = tmp_path / "clean" / "d"
-    write_dicee_dataset(triples, directory, seed=5)
+    stage_partition(
+        output_dir=directory,
+        partitions=split_dicee_dataset(triples=triples, output_dir=directory)
+    )
 
     seen: list[str] = []
     for name in ("train", "valid", "test"):
@@ -436,20 +435,21 @@ def test_splits_partition_the_input_without_loss() -> None:
 
 
 def test_two_triples_still_fill_all_three_splits() -> None:
-    counts = write_dicee_dataset(
-        [Triple("a", "p", "b"), Triple("c", "p", "d")],
-        Path(tempfile.mkdtemp()) / "clean" / "d",
-        seed=1,
-    )
+    counts = count_partitions(split_dicee_dataset(
+        triples=[Triple("a", "p", "b"), Triple("c", "p", "d")],
+        output_dir=Path(tempfile.mkdtemp()) / "clean" / "d",
+    ))
     assert all(counts[name] >= 1 for name in ("train", "valid", "test"))
 
 
 def test_iri_triples_survive_round_trip() -> None:
     directory = Path(tempfile.mkdtemp()) / "clean" / "d"
-    write_dicee_dataset(
-        [Triple("http://e#s", "http://e#p", "http://e#o")],
-        directory,
-        seed=1,
+    stage_partition(
+        output_dir=directory,
+        partitions=split_dicee_dataset(
+            triples=[Triple("http://e#s", "http://e#p", "http://e#o")],
+            output_dir=directory,
+        ),
     )
     line = (directory / "train.txt").read_text(encoding="utf-8").strip()
     assert line.split("\t") == ["http://e#s", "http://e#p", "http://e#o"]
@@ -486,8 +486,10 @@ def test_dataset_dir_own_name_may_contain_tokens() -> None:
 def test_write_dicee_dataset_rejects_unsafe_directory(tmp_path: Path) -> None:
     directory = tmp_path / "my-train-run" / "data"
     with pytest.raises(ValueError, match="dicee"):
-        write_dicee_dataset(
-            [Triple("s", "p", "o")], directory, seed=1
+        stage_partition(
+            output_dir=directory,
+            partitions={"train": [("s", "p", "o")], "valid": [("s", "p", "o")], "test": [("s", "p", "o")],
+            },
         )
 
 
@@ -495,10 +497,12 @@ def test_split_files_are_distinguishable_by_basename() -> None:
     """Each split file must be identifiable without its parent path."""
     tmp_path = Path(tempfile.mkdtemp())  # otherwise test prefix would trigger dicee path check
     directory = tmp_path / "clean" / "data"
-    write_dicee_dataset(
-        [Triple(f"s{i}", "p", f"o{i}") for i in range(30)],
-        directory,
-        seed=1,
+    stage_partition(
+        output_dir=directory,
+        partitions=split_dicee_dataset(
+            output_dir=directory,
+            triples=[Triple(f"s{i}", "p", f"o{i}") for i in range(30)],
+        ),
     )
     names = sorted(p.name for p in directory.glob("*"))
     assert names == ["test.txt", "train.txt", "valid.txt"]
@@ -514,7 +518,7 @@ def test_local_name_handles_hash_and_slash() -> None:
 
 
 def test_parse_triples_skips_literals(kb_path: Path) -> None:
-    triples = parse_triples(kb_path, 42)
+    triples = parse_triples(kb_path)
     assert triples
     assert all(t.subject.startswith("http") for t in triples)
 
@@ -522,7 +526,15 @@ def test_parse_triples_skips_literals(kb_path: Path) -> None:
 def test_dataset_split_never_leaves_empty_files() -> None:
     triples = [Triple(f"s{i}", "p", f"o{i}") for i in range(3)]
     tmp_path = Path(tempfile.mkdtemp())  # otherwise test prefix would trigger dicee path check
-    counts = write_dicee_dataset(triples, tmp_path, seed=1)
+    split = split_dicee_dataset(
+        output_dir=tmp_path,
+        triples=triples,
+    )
+    stage_partition(
+        output_dir=tmp_path,
+        partitions=split,
+    )
+    counts = count_partitions(split)
 
     for name in ("train", "valid", "test"):
         path = tmp_path / f"{name}.txt"
@@ -534,14 +546,26 @@ def test_dataset_split_never_leaves_empty_files() -> None:
 
 def test_dataset_split_is_tab_separated() -> None:
     tmp_path = Path(tempfile.mkdtemp())  # otherwise test prefix would trigger dicee path check
-    write_dicee_dataset([Triple("s", "p", "o")], tmp_path, seed=1)
+    stage_partition(
+        output_dir=tmp_path,
+        partitions=split_dicee_dataset(
+            output_dir=tmp_path,
+            triples=[Triple("s", "p", "o")],
+        ),
+    )
     line = (tmp_path / "train.txt").read_text(encoding="utf-8").splitlines()[0]
     assert line.split("\t") == ["s", "p", "o"]
 
 
 def test_empty_triples_are_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="zero triples"):
-        write_dicee_dataset([], tmp_path, seed=1)
+        stage_partition(
+            output_dir=tmp_path,
+            partitions=split_dicee_dataset(
+                output_dir=tmp_path,
+                triples=[],
+            ),
+        )
 
 
 def test_selection_score_prefers_validation_mrr() -> None:

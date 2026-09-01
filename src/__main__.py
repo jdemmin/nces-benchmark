@@ -129,6 +129,15 @@ def main(argv: list[str] | None = None) -> int:
         nces=nces,
     )
 
+    import resource
+
+    _, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(65536, hard), hard))
+
+    import torch.multiprocessing as mp
+
+    mp.set_sharing_strategy("file_system")
+
     # Imported here so that --help stays fast and dependency-free.
     from src.benchmarking.runner import run_benchmark
 
@@ -138,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         seeds=args.seeds,
         output_dir=args.output_dir,
     )
+    
 
     print(
         f"\nCompleted {summary['num_runs']} benchmark run(s); "

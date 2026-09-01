@@ -11,7 +11,6 @@ from pathlib import Path
 
 from src.benchmarking.metrics import (
     calculate_extension_metrics,
-    calculate_metrics,
     compute_lift,
 )
 from src.config import EmbeddingSettings, NCESSettings
@@ -270,10 +269,6 @@ def evaluate_nces(
     final_time = round(time.perf_counter() - eval_timer, 3)
     scored = [record for record in records if record.error is None]
     logger.info("Collecting mean metrics across %d successful problems", len(scored))
-    mean_metrics = calculate_metrics([
-        record.metrics for record in scored 
-        if record is not None and record.metrics is not None and record.error is None
-    ])
     logger.info("Finished computing mean metrics across %d successful problems", len(scored))
     logger.info(
         "NCES evaluation completed in %.3f seconds: %d problems, %d successful",
@@ -285,7 +280,6 @@ def evaluate_nces(
         split_name=split_name,
         number_of_problems=len(records),
         number_of_successful_problems=len(scored),
-        mean_metrics=mean_metrics,
         learning_problem_results=sorted(records, key=lambda r: r.learning_problem.id),
         embedding_settings=trained_model_settings,
         nces_stats=NCESStats(
@@ -328,7 +322,7 @@ def _fingerprint(net) -> float:
 
 # TODO: Keep track of the signature of the function to avoid accidental changes that break the benchmark.
 def _build_records(
-        problems, 
+        problems: Sequence[LearningProblem], 
         model,
         knowledge_base, 
         target_extensions, 
@@ -424,6 +418,10 @@ def _build_records(
             target_extension=TargetExtensionStructure(
                 positive=len(target),
                 negative=len(negative_extension),
+            ),
+            hypothesis_extension=TargetExtensionStructure(
+                positive=len(predicted),
+                negative=len(set(all_individuals) - set(predicted)),
             ),
             metrics=metric_result,
             runtime=runtime,
