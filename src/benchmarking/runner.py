@@ -130,7 +130,11 @@ def run_benchmark(
             reports.setdefault(kb_name, {})[seed] = report
     try:
         # TODO explicitly mention that here we use a independent seed (default `0`)
-        write_evaluation(evaluate_suite(runs_by_knowledge_base=reports), benchmark_dir / "suite_evaluation.json")  
+        write_evaluation(
+            evaluate_suite(runs_by_knowledge_base=reports), 
+            output_path=benchmark_dir / f"{config.project.benchmark_name}_suite_evaluation.json", 
+            paired_observations_path=benchmark_dir / f"{config.project.benchmark_name}_paired_observation.json"
+        )  
     finally:
         if handler is not None:
             logging.getLogger().removeHandler(handler)
@@ -145,7 +149,12 @@ def run_benchmark(
         return summary
 
 
-def _generate_train_artifacts(config: BenchmarkConfiguration, kb_path: Path, kb_name: str, paths: RunPaths):
+def _generate_train_artifacts(
+        config: BenchmarkConfiguration, 
+        kb_path: Path, 
+        kb_name: str, 
+        paths: RunPaths
+    ):
     current_data_settings_hash: str = _hash_data_generation_settings(config.data_generation)
     old_data_settings_hash: str | None = _read_data_generation_settings_hash(paths.nces_data_dir)
     has_no_ontology_parse_result: bool = old_data_settings_hash is None
@@ -222,9 +231,16 @@ def run_single(
         m=m,
         seed=seed
     )
-    logger.info("Completed Stage 5: NCES training and evaluation for all conditions.")
-    logger.info("Wrote single-run result to %s", paths.nces_results_dir / "single_run_result.json")
-    atomic_extensions = compute_atomic_class_extensions(ontology_parse_result.knowledge_base)
+    logger.info(
+        "Completed Stage 5: NCES training and evaluation for all conditions."
+    )
+    logger.info(
+        "Wrote single-run result to %s", 
+        paths.nces_results_dir / "single_run_result.json"
+    )
+    atomic_extensions = compute_atomic_class_extensions(
+        knowledge_base=ontology_parse_result.knowledge_base
+    )
     knowledge_base_stats = KnowledgeBaseStats(
         knowledge_base_name=knowledge_base_name,
         number_of_individuals=len(ontology_parse_result.all_individuals),
@@ -293,7 +309,10 @@ def _gather_learning_problems_phase(
             config.data_generation,
             seed=current_data_settings_hash,
         )
-        logger.info("Completed Stage 2.1: Learning-problem generation for %d problems.", len(problems))
+        logger.info(
+            "Completed Stage 2.1: Learning-problem generation for %d problems.",
+            len(problems)
+        )
         if not problems:
             raise RuntimeError(
                 f"No non-degenerate learning problems generated for {knowledge_base_name}."
@@ -312,7 +331,9 @@ def _gather_learning_problems_phase(
             len_split_test,
         )
         logger.info("Completed Stage 2.2: Learning-problem splitting.")
-        split, target_extensions, unparsed = _annotate_split(split, ontology_parse_result, len(problems))
+        split, target_extensions, unparsed = _annotate_split(
+            split, ontology_parse_result, len(problems)
+        )
         save_split(split, paths.nces_data_dir)
         write_json(
             payload={k: sorted(v) for k, v in target_extensions.items()},
@@ -327,7 +348,11 @@ def _gather_learning_problems_phase(
     )
 
 
-def _annotate_split(split: dict[str, list[LearningProblem]], ontology_parse_result: OntologyParseResult, len_problems: int):
+def _annotate_split(
+        split: dict[str, list[LearningProblem]], 
+        ontology_parse_result: OntologyParseResult, 
+        len_problems: int
+    ) -> tuple[dict[str, list[LearningProblem]], dict[str, frozenset[str]], list[str]]:
     knowledge_base = ontology_parse_result.knowledge_base
     unparsed: list[str] = []
     target_extensions: dict[str, frozenset[str]] = {}
@@ -352,7 +377,12 @@ def _annotate_split(split: dict[str, list[LearningProblem]], ontology_parse_resu
     return split, target_extensions, unparsed
 
 
-def _ontology_phase(has_no_ontology_parse_result: bool | None, kb_path: Path, knowledge_base_name: str, paths: RunPaths) -> OntologyPhaseResult:
+def _ontology_phase(
+        has_no_ontology_parse_result: bool | None, 
+        kb_path: Path, 
+        knowledge_base_name: str, 
+        paths: RunPaths
+    ) -> OntologyPhaseResult:
     # if old data is not none we can assume that the ontology has already been parsed
     if has_no_ontology_parse_result:
         logger.info("No previous ontology parse results found")

@@ -86,6 +86,17 @@ def test_run_benchmark_records_failures_without_aborting(
 
     monkeypatch.setattr(runner, "run_single", explode)
     monkeypatch.setattr(runner, "_clean_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "resolve_knowledge_base", lambda *a, **k: None)
+
+    class FakeOntologyPhaseResult:
+        ontology_parse_result = None
+        counts = {}
+
+    class FakeLearningProblemPhaseResult:
+        split = None
+        target_extensions = None
+
+    monkeypatch.setattr(runner, "_generate_train_artifacts", lambda *a, **k: (FakeOntologyPhaseResult(), FakeLearningProblemPhaseResult()))
 
     summary = runner.run_benchmark(
         config, knowledge_bases=["father"], seeds=[1, 2], output_dir=tmp_path
