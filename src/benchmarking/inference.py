@@ -1795,7 +1795,7 @@ class ClassificationSummary:
     """
 
     condition: str
-    n_problems: int
+    n_observations: int
     mean_mcc: float
     pooled_mcc: float
     pooled_matrix: ConfusionMatrix
@@ -1805,7 +1805,7 @@ class ClassificationSummary:
     def to_dict(self) -> dict[str, Any]:
         return {
             "condition": self.condition,
-            "n_problems": self.n_problems,
+            "n_observations": self.n_observations,
             "mean_mcc": self.mean_mcc,
             "pooled_mcc": self.pooled_mcc,
             "pooled_matrix": self.pooled_matrix.to_dict(),
@@ -1857,7 +1857,7 @@ def summarize_classification(
     )
     return ClassificationSummary(
         condition=condition,
-        n_problems=len(per_problem_mcc),
+        n_observations=len(per_problem_mcc),
         mean_mcc=float(np.mean(per_problem_mcc)),
         pooled_mcc=matthews_correlation_coefficient(pooled),
         pooled_matrix=pooled,
