@@ -146,7 +146,7 @@ def run_benchmark(
         }
         write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
         _clean_dir(path=benchmark_dir, make_zip=True)
-        return summary
+    return summary
 
 
 def _generate_train_artifacts(
@@ -392,11 +392,11 @@ def _ontology_phase(
             path=paths.ontology_parse_data_dir / "ontology_parse_result.json"
         )
         split_triple = split_dicee_dataset(
-            directory=paths.embeddings_data_dir,
+            output_dir=paths.embeddings_data_dir,
             triples=ontology_parse_result.triples
         )
         stage_partition(
-            directory=paths.embeddings_data_dir,
+            output_dir=paths.embeddings_data_dir,
             partitions=split_triple
             )
         logger.info("Completed Stage 1: Ontology parsing.")
@@ -406,7 +406,7 @@ def _ontology_phase(
             knowledge_base=load_knowledge_base(resolve_knowledge_base(knowledge_base_name))
         )
         split_triple = split_dicee_dataset(
-            directory=paths.embeddings_data_dir,
+            output_dir=paths.embeddings_data_dir,
             triples=ontology_parse_result.triples
         )
     counts = count_partitions(

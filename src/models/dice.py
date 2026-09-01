@@ -106,7 +106,7 @@ def count_partitions(
     return counts
 
 def split_dicee_dataset(
-    directory: Path,
+    output_dir: Path,
     triples: Sequence[Triple],
     ratios: tuple[float, float, float] = SPLIT_RATIOS,
 ) -> dict[str, list[tuple[str, str, str]]]:
@@ -114,10 +114,7 @@ def split_dicee_dataset(
     if not triples:
         raise ValueError("Cannot build a DICE dataset from zero triples.")
 
-    # See KNOWN_ISSUES.md.
-    _assert_dicee_safe_dataset_dir(directory)
-
-    directory.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     sorted_tuple = [triple.as_tuple() for triple in triples]
     # random.Random(seed).shuffle(shuffled)
 
@@ -137,15 +134,17 @@ def split_dicee_dataset(
         if not partitions[name]:
             partitions[name] = partitions["train"][:1]
 
-    logger.info("Split DICE dataset in %s.", directory)
+    logger.info("Split DICE dataset in %s.", output_dir)
     return partitions
 
 def stage_partition(
-    directory: Path,
+    output_dir: Path,
     partitions: dict[str, list[tuple[str, str, str]]],
 ):
+    # See KNOWN_ISSUES.md.
+    _assert_dicee_safe_dataset_dir(output_dir)
     for name, rows in partitions.items():
-            path = directory / f"{name}.txt"
+            path = output_dir / f"{name}.txt"
             with path.open("w", encoding="utf-8") as handle:
                 for subject, predicate, obj in rows:
                     handle.write(f"{subject}\t{predicate}\t{obj}\n")
@@ -251,7 +250,6 @@ def export_entity_embeddings(
     output_path: Path,
     *,
     use_local_names: bool = True,
-    expected_dim: int | None = None,
 ) -> Path:
     """Export DICE entity embeddings to the CSV schema NCES expects.
 
@@ -381,7 +379,6 @@ def build_embeddings(
         export_entity_embeddings(
             run_dir, 
             output_path, 
-            expected_dim=nces_embedding_dim
         )
         logger.info(
             "Cleaned up DICE run directory %s after exporting embeddings", 
