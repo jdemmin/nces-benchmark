@@ -184,7 +184,7 @@ the module or the model family, write DICE.
   invocation, assembled from the four `input/*.json` files plus CLI
   overrides, and embedded verbatim in every report.
 - **Settings file** — one of the four JSON files in `input/`. See §5.
-- **Split ratio dice** — the train/validation/test proportions, `[0.8, 0.1, 0.1]` 
+- **Split ratio dice** — the train/validation/test proportions, `[0.8, 0.1, 0.1]`
 - **Split ratio learning problems** — train/test proportions `[0.8, 0.2]`.
 
 ---
@@ -198,7 +198,7 @@ the module or the model family, write DICE.
 | `src/config.py` | Typed settings dataclasses; translates project JSON field names into upstream keyword arguments. |
 | `src/paths.py` | The canonical output directory layout and knowledge-base resolution. |
 | `src/logging_utils.py` | Console and per-run file logging. |
-| `src/data/complexity.py` | Complexity computation: structural measures from DL expressions, hardness measures from the reasoner.|
+| `src/data/complexity.py` | Complexity computation: structural measures from DL expressions, hardness measures from the reasoner. |
 | `src/data/ontology.py` | OWL parsing, RDF-triple extraction, individual enumeration, extension computation. |
 | `src/data/lp.py` | Learning-problem generation, the canonical schema, and splitting. |
 | `src/data/results.py` | Contains several class definitions of results that are returned across the benchmark. |
@@ -236,6 +236,7 @@ input.
    compute its extension, and score it against the target extension.
 8. **Result aggregation** — summarize per run, per knowledge base, and per
    suite.
+
 > `Learning-problem generation`, `Hardness annotation`, and
 > `Learning-problem splitting` are computed once per seed and reused in all
 > consecutive seeds. `Learning-problem generation` and
@@ -274,7 +275,6 @@ raw output to `LPs.json`, and the project then normalizes that output into the
 canonical schema below — expanding local names back to full IRIs and rejecting
 degenerate problems.
 
-
 ### Settings
 
 Generation is controlled by `input/data_generation_settings.json`:
@@ -298,7 +298,7 @@ parameter — it exposes a boolean `beyond_alc` — so `src/config.py` maps
 `max_child_length` upstream and `num_rand_samples` is `max_num_lps`. These
 translations live in `DataGenerationSettings.lpgen_kwargs()`.
 
-On the name rho. In KB2Data.__init__, rho is the local variable holding the constructed ExpressRefinement operator — the conventional DL symbol \(\rho\) for a refinement operator.
+On the name rho. In KB2Data.**init**, rho is the local variable holding the constructed ExpressRefinement operator — the conventional DL symbol \(\rho\) for a refinement operator.
 It is not a settable parameter. Three fields shape it: beyond_alc toggles the five use_* constructor flags as a group,
 refinement_expressivity becomes expressivity, and downsample_refinements becomes downsample.
 
@@ -326,6 +326,7 @@ Every generated learning problem is serialized as:
   "num_pos": 1,
   "num_neg": 1
 ```
+
 > The four hardness fields are null immediately after generation and are populated by the hardness annotation stage,
 > which runs once per knowledge base after ontology parsing. Structural fields are always present.
 
@@ -346,7 +347,7 @@ target concept into evaluation, and the resulting scores would be
 meaningless. The splits are disjoint by construction and deterministic in the
 seed.
 Further, the splits are stratified by a given value of `complexity`. Per
-default this value is `dl_length`.
+default this value is `dl_length`
 ---
 
 ## 6. Metrics and result fields
@@ -404,10 +405,10 @@ Per-problem fields in a report's `results` array:
 | `accuracy`, `precision`, `recall`, `f1`, `jaccard`, `semantic_equivalence` | The metrics above. |
 | `runtime_seconds` | Wall-clock time for this problem. |
 | `error` | Present only if NCES raised; the problem is then excluded from aggregates. |
-| `complexity`	| The full complexity object, copied from the learning problem.
+| `complexity` | The full complexity object, copied from the learning problem.
 | `lift` | f1 minus atomic_baseline_f1. Negative when the hypothesis underperforms the best atomic class.
 | `mcc` | Split into mean MCC and pooled MCC. Divergence between them indicates the embedding effect is concentrated in
-problems of a particular size.|
+problems of a particular size. |
 
 Run-level and embedding-level fields:
 
@@ -446,14 +447,13 @@ artifacts; it never re-runs the learner.
 > scoring. When ambiguity is possible, write inferential evaluation or
 > NCES evaluation explicitly.
 
-
 ### 7.1 Unit of analysis
 
-  - ``Atomic observation`` — one (learning problem, seed) pair for one
+- ``Atomic observation`` — one (learning problem, seed) pair for one
   outcome. This is the unit of analysis for the entire evaluation stage.
   Never "sample" or "data point".
-  - ``Paired difference`` — the response variable, always
-  \(d_{ij} = m^{\text{dice}}_{ij} - m^{\text{random}}_{ij}\) for problem
+- ``Paired difference`` — the response variable, always
+  \(d_{ij} = m^{\text{dice}}*{ij} - m^{\text{random}}*{ij}\) for problem
   \(i\), seed \(j\), and outcome \(m\). Differencing cancels the target
   concept, examples, split, knowledge base, NCES architecture, and seed
   shared by the two conditions, which is exactly the isolation the
@@ -533,8 +533,8 @@ model on paired differences, fit per knowledge base:
   across concepts than across training runs, which tells a reader whether a
   single run is trustworthy.
 - ``REML`` — restricted maximum likelihood, the fitting method.
-  _profile_reml optimizes the profiled REML criterion over the two variance
-  ratios \((\sigma^2_{\text{seed}}/\sigma^2_\varepsilon,\;
+  *profile_reml optimizes the profiled REML criterion over the two variance
+  ratios \((\sigma^2*{\text{seed}}/\sigma^2_\varepsilon,\;
   \sigma^2_{\text{problem}}/\sigma^2_\varepsilon)\) by Nelder–Mead from four
   starts, then back-solves the generalized least-squares estimate.
 - ``Marginal covariance`` — \(V = \sigma^2_{\text{seed}} Z_s Z_s^\top +
@@ -554,6 +554,7 @@ model on paired differences, fit per knowledge base:
 
 Because lift differences are bounded and spike at zero, the model-based
 interval is not trusted on its own.
+
 - ``Model-based interval (ci95)`` — the t-interval from \(\beta_0\) and its
   standard error, on the conservative degrees of freedom.
 - ``Cluster bootstrap interval (bootstrap_ci95)`` — a percentile bootstrap
@@ -566,7 +567,8 @@ interval is not trusted on its own.
   bootstrap wins, and the conjunction verdict (§7.9) uses it.
 
 ### 7.5 Confirmatory secondary — the complexity trend
-\(d_{ij} = \beta_0 + \beta_1\,(\text{dl\_length}_i - \overline{\text{dl\_length}}) + \varepsilon_{ij}\)
+
+\(d_{ij} = \beta_0 + \beta_1\,(\text{dl\_length}*i - \overline{\text{dl\_length}}) + \varepsilon*{ij}\)
 
 - ``Trend predictor`` — dl_length, always centered. Centering is
   required, not cosmetic: uncentered, \(\beta_0\) is the effect at length
@@ -597,6 +599,7 @@ interval is not trusted on its own.
 ### 7.6 Robustness layer
 
 The nonparametric agreement check. Two steps, in order:
+
 - ``Collapse over seeds`` — average each problem's paired difference across
   its seeds, yielding one value per problem. Reduces per-problem noise by
   roughly \(\sqrt{n_{\text{seeds}}}\) and makes the across-problem
@@ -652,9 +655,9 @@ generate additional claims. It deliberately carries no p-value.
   failure mode; a reduction under dice is a result.
 - ``Classification summary`` — per condition, the pooled confusion matrix
   reconstructed from the per-problem result fields, with two MCC figures:
-	- ``mean MCC`` — weights every learning problem equally; the quantity the
+- ``mean MCC`` — weights every learning problem equally; the quantity the
     paired analysis operates on.
-	- ``pooled MCC`` — computed from the summed confusion matrix; dominated by
+- ``pooled MCC`` — computed from the summed confusion matrix; dominated by
     problems with large extensions.
   Divergence between them indicates the embedding effect is concentrated in
   problems of a particular size.
@@ -927,11 +930,11 @@ Apply these in code, identifiers, log messages, JSON keys, and prose.
 | metric / score | — | A numeric outcome. |
 | seed | — | Never a synonym for run or dataset. |
 | complexity | difficulty, level | The multi-dimensional object. |
-| DL length	| complexity, length, concept length | The scalar token count; one field within complexity. |
-| hardness	| semantic difficulty, hardness score	| The reasoner-derived fields, collectively. Not a single number. |
-| nesting depth	| depth	| depth alone is the LPGen search parameter. |
-| lift	| improvement, delta, gain |	F1 over atomic baseline. |
-| atomic baseline F1 |	baseline, trivial score	| Fully qualified; there are other baselines in this project.
+| DL length | complexity, length, concept length | The scalar token count; one field within complexity. |
+| hardness | semantic difficulty, hardness score | The reasoner-derived fields, collectively. Not a single number. |
+| nesting depth | depth | depth alone is the LPGen search parameter. |
+| lift | improvement, delta, gain | F1 over atomic baseline. |
+| atomic baseline F1 | baseline, trivial score | Fully qualified; there are other baselines in this project.
 | target / hypothesis extension | extension | Always qualified. |
 | number of learning problems | problem_count | Clearer in CLI help. |
 | property / role | relation | Ontology terminology. |
@@ -963,6 +966,7 @@ Apply these in code, identifiers, log messages, JSON keys, and prose.
 | Report / Summary | Per-run result / cross-run aggregate. |
 
 ## 12. Schema versions
+
 Learning-problem schema v1 — `complexity` is an integer, the DL-expression length.
 v2 — `complexity` is an object; the v1 integer survives as complexity.dl_length.
 v3 — no backwards compatibility for `complexity`. It is a pure multi-dimensional object.
