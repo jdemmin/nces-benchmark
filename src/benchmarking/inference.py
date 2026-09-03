@@ -1,3 +1,4 @@
+#src/benchmarking/inference.py
 """Inferential analysis of the embedding-condition contrast.
 
 Implements the pre-specified outcome hierarchy: a confirmatory primary
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 PRIMARY_OUTCOME: str = "lift"
 
 #: Agreement check against the primary. Not a second primary.
-ROBUSTNESS_OUTCOME: str = "lift"
+ROBUSTNESS_OUTCOME: str = "f1_score"
 
 #: Descriptive mechanism outcomes. Reported, never tested confirmatorily.
 MECHANISM_OUTCOMES: tuple[str, ...] = (
@@ -274,6 +275,7 @@ class PairedDesign:
     seeds: tuple[int, ...]
     problem_ids: tuple[str, ...]
     unpaired_problem_ids: tuple[str, ...]
+    redundant_problem_ids: tuple[str, ...]
     error_counts: dict[str, int]
 
     target_extension_sizes: dict[str, int] = field(default_factory=dict)
@@ -296,6 +298,7 @@ class PairedDesign:
             "n_problems": len(self.problem_ids),
             "n_observations": self.n_observations,
             "unpaired_problem_ids": list(self.unpaired_problem_ids),
+            "redundant_problem_ids": list(self.redundant_problem_ids),
             "error_counts": dict(self.error_counts),
         }
 
@@ -371,6 +374,8 @@ def build_paired_design(
         )
 
         unpaired_ids |= set(dice_by_id) ^ set(random_by_id)
+        redundant_ids = {identifier for identifier in set(dice_by_id) & set(random_by_id) if dice_by_id[identifier].learning_problem.complexity.hardness.redundant}
+        unpaired_ids |= redundant_ids
 
         for identifier in sorted(set(dice_by_id) & set(random_by_id)):
             dice_result = dice_by_id[identifier]
@@ -450,6 +455,7 @@ def build_paired_design(
         seeds=tuple(used_seeds),
         problem_ids=tuple(sorted(paired_ids)),
         unpaired_problem_ids=tuple(sorted(unpaired_ids)),
+        redundant_problem_ids=tuple(sorted(redundant_ids)),
         error_counts=error_counts,
         target_extension_sizes=target_extension_sizes,
     )
