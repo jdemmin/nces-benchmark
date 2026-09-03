@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ontolearn.knowledge_base import KnowledgeBase
+from owlapy.owl_reasoner import SyncReasoner
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +49,14 @@ def local_name(iri: str) -> str:
     return iri
 
 
-def load_knowledge_base(kb_path: Path):
+def load_knowledge_base(kb_path: Path, uses_structural_reasoner: bool = True):
     """Load an OWL file into an ``ontolearn`` knowledge base (lazy import)."""
     from ontolearn.knowledge_base import KnowledgeBase
 
     logger.info("Loading knowledge base from %s", kb_path)
-    return KnowledgeBase(path=str(kb_path))
+    if uses_structural_reasoner:
+        return KnowledgeBase(path=str(kb_path))
+    return KnowledgeBase(path=str(kb_path), reasoner=SyncReasoner(ontology=str(kb_path), reasoner="HermiT"))
 
 
 def parse_triples(kb_path: Path) -> list[Triple]:
