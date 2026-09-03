@@ -2093,11 +2093,16 @@ def evaluate_knowledge_base(
         except (InferenceError, Exception) as error:  # noqa: BLE001
             notes.append(f"Complexity trend failed: {error}")
 
+
+    # Robustness check with f1_score.
     robustness_observations = (
-        primary_observations
-        if primary_observations
-        else design.for_outcome(ROBUSTNESS_OUTCOME)
-    )
+        design.for_outcome(ROBUSTNESS_OUTCOME)
+    ) 
+    # robustness_observations = (
+    #     primary_observations
+    #     if primary_observations
+    #     else design.for_outcome(ROBUSTNESS_OUTCOME)
+    # )
     if robustness_observations:
         try:
             robustness = run_robustness(
