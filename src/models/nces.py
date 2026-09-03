@@ -11,7 +11,7 @@ from pathlib import Path
 
 from src.benchmarking.metrics import (
     calculate_extension_metrics,
-    compute_lift,
+    compute_atomic_baseline_lift,
 )
 from src.config import EmbeddingSettings, NCESSettings
 from src.data.lp import LearningProblem
@@ -390,14 +390,14 @@ def _build_records(
 
         runtime = round(time.perf_counter() - started, 3)
         metrics = calculate_extension_metrics(predicted, target, all_individuals)
-        lift = compute_lift(complexity=problem.complexity, f1=metrics.f1)
-        if lift is None:
+        atomic_baseline_lift = compute_atomic_baseline_lift(complexity=problem.complexity, f1=metrics.f1)
+        if atomic_baseline_lift is None:
             logger.warning(
                 "Learning problem %s has no hardness annotation; "
-                "lift is undefined and will be reported as 0.0",
+                "atomic_baseline_lift is undefined and will be reported as 0.0",
                 problem.id,
             )
-            lift = 0.0
+            atomic_baseline_lift = 0.0
         metric_result = MetricsResult(
             accuracy=metrics.accuracy,
             f1_score=metrics.f1,
@@ -407,7 +407,7 @@ def _build_records(
             intersection=metrics.intersection,
             union=metrics.union,
             semantic_equivalence=metrics.semantic_equivalence,
-            lift=lift, # type: ignore //is checked above
+            atomic_baseline_lift=atomic_baseline_lift, # type: ignore //is checked above
         )
 
         negative_extension = set(all_individuals) - set(target)

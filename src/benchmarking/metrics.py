@@ -59,7 +59,7 @@ def _ratio_bucket(ratio: float | None) -> str:
 
 
 
-def compute_lift(f1: float, complexity: Complexity) -> float | None:
+def compute_atomic_baseline_lift(f1: float, complexity: Complexity) -> float | None:
     """F1 relative to the best single atomic class.
 
     ``None`` when the learning problem carries no hardness annotation, since
@@ -143,7 +143,7 @@ def calculate_metrics(records: list[MetricsResult] | list[MeanMetricsResult]) ->
         "semantic_equivalence_rate",
         "intersection",
         "union",
-        "lift",
+        "atomic_baseline_lift",
     )
     counts = {key: 0 for key in metrics}
     means = {key: 0.0 for key in metrics}
@@ -181,7 +181,7 @@ def calculate_metrics(records: list[MetricsResult] | list[MeanMetricsResult]) ->
         semantic_equivalence_rate=_get_single_metric(key="semantic_equivalence_rate", mean=means, variance=variance, counts=counts),
         intersection=_get_single_metric(key="intersection", mean=means, variance=variance, counts=counts),
         union=_get_single_metric(key="union", mean=means, variance=variance, counts=counts),
-        lift=_get_single_metric(key="lift", mean=means, variance=variance, counts=counts),
+        atomic_baseline_lift=_get_single_metric(key="atomic_baseline_lift", mean=means, variance=variance, counts=counts),
         lp_count=len(tmp_records)
     )
 
