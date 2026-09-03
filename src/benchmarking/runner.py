@@ -3,6 +3,7 @@
 
 import json
 import logging
+import tempfile
 import time
 from collections.abc import Sequence
 from os import makedirs
@@ -40,7 +41,7 @@ from src.data.results import (
 )
 from src.logging_utils import configure_logging
 from src.models.dice import (
-    EmbeddingResultDice,
+    BuildEmbeddingResult,
     build_embeddings,
     count_partitions,
     split_dicee_dataset,
@@ -56,7 +57,6 @@ from src.paths import (
     RunPaths,
     resolve_knowledge_base,
     run_paths,
-    update_false_dir_names,
 )
 from src.random_utils import seed_everything
 from src.writing_utils import write_json
@@ -79,13 +79,9 @@ def run_benchmark(
     selected_kbs = sorted(knowledge_bases or config.knowledge_bases)
     data_generation_settings = sorted(config.data_generation, key=lambda d: d.kb)
     selected_seeds = list(seeds or config.project.seeds)
-    base = output_dir or OUTPUT_DIR
-    logger.warning(
-        "benchmark_name cannot contain train, valid or test in the name."
-        "Replacing them with '_trian_', '_vaild_' and '_tset_' respectively."
-    )
-    updated_benchmark_name = update_false_dir_names(config.project.benchmark_name)
-    benchmark_dir = base / Path(updated_benchmark_name)
+
+    base = Path(tempfile.TemporaryDirectory().name)
+    benchmark_dir = base / "benchmark"
 
     reports: dict[str, dict[int, SingleRunResult]] = {}
     failures: dict[str, KnowledgeBaseFailure] = {}
@@ -101,7 +97,7 @@ def run_benchmark(
             seed_everything(seed)
             kb_path = resolve_knowledge_base(kb_name)
             paths = run_paths(
-                updated_benchmark_name,
+                str(benchmark_dir),
                 seed,
                 kb_name,
                 output_dir=base,
@@ -151,10 +147,16 @@ def run_benchmark(
             "failures": failures,
             "elapsed_time": round(time.perf_counter() - started, 3),
         }
+        out=output_dir or OUTPUT_DIR
         write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
-        _clean_dir(path=benchmark_dir, make_zip=True)
+        _copy_from_temp_dir(from_path=benchmark_dir, to_path=out)
+        _clean_dir(path=out, make_zip=True)
+        
     return summary
 
+def _copy_from_temp_dir(from_path: Path, to_path: Path):
+    import shutil
+    shutil.copytree(from_path, to_path, dirs_exist_ok=True)
 
 def _generate_train_artifacts(
         config: BenchmarkConfiguration,
@@ -219,7 +221,7 @@ def run_single(
     ontology_parse_result: OntologyParseResult = ontology_phase_result.ontology_parse_result
     counts: dict[str, int] = ontology_phase_result.counts
     logger.info("Starting Stage 4: Embedding generation.")
-    embedding_report, m = _embedding_stage(
+    build_embedding_result = _embedding_stage(
         paths=paths,
         benchmark_settings=config,
         seed=seed,
@@ -239,9 +241,8 @@ def run_single(
         knowledge_base=ontology_parse_result.knowledge_base,
         all_individuals=ontology_parse_result.all_individuals,
         target_extensions=target_extensions,
-        embedding_report=embedding_report,
+        build_embedding_result=build_embedding_result,
         config=config,
-        m=m,
         seed=seed
     )
     logger.info(
@@ -493,22 +494,20 @@ def _embedding_stage(
         seed: int,
         triples: list[Triple],
         counts: dict[str, int],
-    ) -> tuple[dict[str, EmbeddingResultDice], int]:
+    ) -> BuildEmbeddingResult:
     """
     Run the embedding stage and return the report.
     """
 
-    report, m = build_embeddings(
+    return build_embeddings(
             embeddings_dir=paths.embeddings_dir,
             data_dir=paths.embeddings_data_dir,
             embedding_settings=benchmark_settings.embedding,
             seed=seed,
-            embedding_conditions=benchmark_settings.project.embedding_conditions,
             nces_embedding_dim=benchmark_settings.nces.embedding_dim,
             triples=triples,
             counts=counts,
-        )
-    return report, m
+    )
 
 
 def _parse_ontology(kb_path: Path) -> OntologyParseResult:
@@ -574,8 +573,7 @@ def _stage_train_eval_nces(
         knowledge_base: KnowledgeBase, 
         all_individuals: list[str], 
         target_extensions: dict[str, frozenset[str]], 
-        embedding_report: dict[str, EmbeddingResultDice], 
-        m: int,
+        build_embedding_result: BuildEmbeddingResult,
         config: BenchmarkConfiguration, seed: int
     ) -> SingleRunResult:
     """
@@ -590,12 +588,11 @@ def _stage_train_eval_nces(
     conditions: dict[str, EmbeddingResult] = {}
     for condition in config.project.embedding_conditions:
         embeddings_file_path = paths.entity_embeddings_path(
-            model_name=config.embedding.model_name, random=(condition == "random")
+            model_name=config.embedding.model_name, suffix=condition
         )
         # location where the trained model will be saved
         # and parent directory where the evaluation will read from
         trained_model_path = paths.nces_suffix_dir(condition)
-        embedding_dim = config.nces.embedding_dim if condition == "random" else m
         logger.info(
             "Starting NCES training for condition '%s'" \
             "with embeddings from '%s'",
@@ -608,7 +605,7 @@ def _stage_train_eval_nces(
             trained_models_dir=trained_model_path,
             train_data=train_data,
             settings=config.nces,
-            m=embedding_dim,
+            m=build_embedding_result.model_csv_dim,
             seed=seed,
         )
         write_json(
@@ -635,8 +632,8 @@ def _stage_train_eval_nces(
             all_individuals=all_individuals,
             target_extensions=target_extensions,
             split_name="test",
-            m=embedding_dim,
-            trained_model_settings=embedding_report[condition].embedding_settings,
+            m=build_embedding_result.model_csv_dim,
+            trained_model_settings=build_embedding_result.results[condition].embedding_settings,
             seed=seed,
             degraded=training.degraded,
         )
