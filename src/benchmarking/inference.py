@@ -56,7 +56,6 @@ EXPLORATORY_OUTCOMES: tuple[str, ...] = (
     "mcc",
     "accuracy",
     "jaccard",
-    "semantic_equivalence",
 )
 
 #: Complexity fields used to bucket the exploratory grid.
@@ -67,7 +66,7 @@ EXPLORATORY_BUCKETINGS: tuple[str, ...] = (
 )
 
 #: Predictor for the confirmatory secondary. Contiguous; never binned.
-TREND_PREDICTOR: str = "dl_length"
+TREND_PREDICTOR: str = "depth"
 
 #: Covariate for the trend confounding check.
 TREND_COVARIATE: str = "extension_ratio"
@@ -936,12 +935,12 @@ def fit_complexity_trend(
     predictor: str = TREND_PREDICTOR,
     covariate: str | None = TREND_COVARIATE,
 ) -> TrendResult:
-    """Regress paired differences on centered ``dl_length``.
+    """Regress paired differences on centered ``depth``.
 
-    ``dl_length`` is contiguous and is never binned: binning discards
+    ``depth`` is contiguous and is never binned: binning discards
     information, costs power, and makes the bin boundaries an arbitrary
     forking path. Centering is required rather than cosmetic -- without
-    it ``beta_0`` is the effect at length zero, which does not exist.
+    it ``beta_0`` is the effect at depth zero, which does not exist.
 
     The covariate check addresses a real confound: longer concepts tend
     to have smaller extensions, and small extensions destabilize F1.
