@@ -17,7 +17,7 @@ Two **embedding conditions** are compared while every other factor — knowledge
 | Condition | Entity embeddings supplied to NCES |
 | --- | --- |
 | `dice` | Trained on the knowledge graph by a DICE model, selected from a hyperparameter search. |
-| `random` | Deterministic uniform random vectors, identical CSV schema. Dimensionality aligns with NCES embedding dimension. |
+| `random` | Deterministic uniform random vectors, identical CSV schema and dimensionality as the dice embedding. |
 
 Any difference in the resulting metrics is therefore attributable to the embeddings alone.
 
@@ -64,7 +64,7 @@ Description Logic and ontology-learning terms, describing the subject matter ind
 - **Hardness** — the reasoner-derived, extension-dependent subset of complexity's fields: extension ratio, atomic baseline F1, and redundancy. Distinguished from structural complexity because it depends on the knowledge base, not only the expression. Not a single number.
 - **Extension ratio** — \(\lvert T \rvert / \lvert U \rvert\), the fraction of all individuals in the target extension. Values near 0 or 1 indicate degenerate class balance.
 - **Atomic baseline F1** — the best F1 achievable by any single atomic class, computed over extensions. The floor a hypothesis must clear to demonstrate non-trivial learning.
-- **Lift** — a hypothesis's F1 minus the atomic baseline F1 of its learning problem. May be negative. The primary outcome of the inferential evaluation (§7.2).
+- **Atomic baseline lift** — a hypothesis's F1 minus the atomic baseline F1 of its learning problem. May be negative. The primary outcome of the inferential evaluation (§7.2).
 - **Redundant target concept** — a target concept whose extension equals that of some atomic class, making it learnable far below its structural complexity.
 
 ### Learning problems
@@ -233,7 +233,7 @@ Let \( P \) be the hypothesis extension, \( T \) the target extension, and \( U 
 | **Accuracy** | Fraction of \( U \) classified correctly, counting true negatives. Dominated by true negatives when `extension_ratio` is small. |
 | **Jaccard** | \( \lvert P \cap T \rvert / \lvert P \cup T \rvert \). Not independent of F1: \( J = F1 / (2 - F1) \) for a fixed pair of sets. |
 | **Semantic equivalence** | \( P = T \) exactly. A per-problem boolean; aggregated as a rate, never averaged as a score. |
-| **Lift** | F1 minus `atomic_baseline_f1`. Negative when the hypothesis underperforms the best atomic class. |
+| **Atomic baseline lift** | F1 minus `atomic_baseline_f1`. Negative when the hypothesis underperforms the best atomic class. |
 
 All ratios return `0.0` on an empty denominator rather than raising.
 
@@ -271,7 +271,7 @@ $$ \mathrm{MCC} = \frac{TP \cdot TN - FP \cdot FN}{\sqrt{(TP+FP)(TP+FN)(TN+FP)(T
 | `num_pos` / `num_neg` | Counts of the *sampled* examples. |
 | `target_positive_count` / `target_negative_count` | Counts over the *full* target extension. |
 | `target_extension_size` | Object with `positive`, `negative`, `total`. |
-| `accuracy`, `precision`, `recall`, `f1`, `jaccard`, `lift`, `mcc`, `semantic_equivalence` | The metrics above. |
+| `accuracy`, `precision`, `recall`, `f1`, `jaccard`, `atomic_baseline_lift`, `mcc`, `semantic_equivalence` | The metrics above. |
 | `runtime_seconds` | Wall-clock time for this problem. |
 | `error` | Present only if NCES raised; the problem is then excluded from every aggregate. |
 
@@ -310,17 +310,17 @@ The set of outcomes is **pre-specified** — fixed before the numbers are seen. 
 
 | Layer | Outcome(s) | Role |
 | --- | --- | --- |
-| **Primary** | `lift` | Confirmatory. The single headline claim. |
-| **Confirmatory secondary** | `lift` trend in `dl_length` | Confirmatory. Does the advantage grow with complexity? |
+| **Primary** | `atomic_baseline_lift` | Confirmatory. The single headline claim. |
+| **Confirmatory secondary** | `atomic_baseline_lift` trend in `dl_length` | Confirmatory. Does the advantage grow with complexity? |
 | **Mechanism** | `precision`, `recall`, `hypothesis_extension_size` | Descriptive. Never tested confirmatorily. |
-| **Robustness** | `lift`, nonparametrically | Agreement check against the primary. Not a second primary. |
+| **Robustness** | `f1_score`, nonparametrically | Agreement check against the primary. Not a second primary. |
 | **Exploratory** | `mcc`, `accuracy`, `jaccard`, `semantic_equivalence`, crossed with the bucketings | Screening only. BH-screened, labeled `"role": "exploratory"`. |
 
 - **Confirmatory** — pre-specified, tested, and permitted to support a claim. Exactly two coefficients per knowledge base carry this status: \(\beta_0\) and \(\beta_1\).
 - **Descriptive** — reported without a p-value, to interpret the confirmatory result.
 - **Exploratory** — screened, not claimed.
 
-Why `lift` is primary: it is F1 minus atomic baseline F1, so it is the only outcome distinguishing learning from recovering a good atomic class. Why the others are demoted: `jaccard` is a monotone reparameterization of F1 (§6), so testing both tests one thing twice; `accuracy` is dominated by true negatives at small extension ratios; `semantic_equivalence` is a rate, not a score.
+Why `atomic baseline lift` is primary: it is F1 minus atomic baseline F1, so it is the only outcome distinguishing learning from recovering a good atomic class. Why the others are demoted: `jaccard` is a monotone reparameterization of F1 (§6), so testing both tests one thing twice; `accuracy` is dominated by true negatives at small extension ratios; `semantic_equivalence` is a rate, not a score.
 
 > **MCC's dual placement.** `mcc` is an *exploratory outcome* in the grid (§7.8). The *classification summary* that reports mean and pooled MCC (§7.7) is *mechanism*. These are different layers and the distinction is deliberate.
 
@@ -348,7 +348,7 @@ $$ d_{ij} = \beta_0 + u_{\text{seed}(j)} + u_{\text{problem}(i)} + \varepsilon_{
 
 ### 7.4 Interval agreement
 
-Because `lift` differences are bounded and spike at zero, the model-based interval is not trusted alone.
+Because `atomic baseline lift` differences are bounded and spike at zero, the model-based interval is not trusted alone.
 
 - **Model-based interval** (`ci95`) — the t-interval from \(\beta_0\) and its standard error, on the conservative degrees of freedom.
 - **Cluster bootstrap interval** (`bootstrap_ci95`) — a percentile bootstrap in which **the seed is the resampling unit**. Whole seeds are resampled with replacement, preserving the within-run dependence the seed random intercept exists to absorb. Individual observations are never resampled. `bootstrap_resamples` records the count.
@@ -445,7 +445,7 @@ The policy is restated verbatim in the artifact's suite-level `multiplicity` blo
 - **Conjunction claim** — the confirmatory claim is "dice beats random on **every** knowledge base". It is a conjunction, which is why no correction is applied across knowledge bases.
 - **Conjunction verdict** (`conjunction_holds`) — `true` only when every knowledge base's chosen interval lies strictly above zero. The chosen interval is the bootstrap one when `agreement == "disagree-trust-bootstrap"`, otherwise the model-based one. A knowledge base with no estimable primary counts as a **failure**, not a skip.
 - **Conjunction statement** (`conjunction_statement`) — the human-readable form, e.g. "dice > random on 3/4 knowledge bases (95% interval excluding zero). Conjunction does not hold." All results are reported regardless of outcome.
-- **Outcome unavailable** (`outcome_unavailable`) — a list of outcome names the design could not supply at all. The canonical case: `lift` requires `atomic_baseline_f1` from the hardness annotation stage, and without it the primary does not run; the evaluation then reports the robustness layer in its place and records the substitution in `notes`.
+- **Outcome unavailable** (`outcome_unavailable`) — a list of outcome names the design could not supply at all. The canonical case: `atomic_baseline_lift` requires `atomic_baseline_f1` from the hardness annotation stage, and without it the primary does not run; the evaluation then reports the robustness layer in its place and records the substitution in `notes`.
 - **Notes** (`notes`, and per-block `note`) — free text recording every layer that could not be estimated. Each layer is guarded independently: a failed layer is noted and the remaining layers still run, consistent with the suite's design to finish and report rather than abort.
 - **Evaluation artifact** — the JSON emitted by `write_evaluation`, sitting next to the descriptive summaries so the analysis is auditable and the family of tests is explicit.
 - **Paired-observations artifact** — the optional second file holding every paired observation and every paired-hypothesis record. Worth persisting separately: it is the evaluation's input, and it enables per-concept inspection without re-running anything.
@@ -473,7 +473,7 @@ Extends §9.
 | paired difference | delta, gap, improvement, gain | The response variable. |
 | atomic observation | sample, data point | The unit of analysis. |
 | paired design | dataset, matrix | The assembled input. |
-| primary outcome | main metric | Exactly one: `lift`. |
+| primary outcome | main metric | Exactly one: `atomic_baseline_lift`. |
 | confirmatory / exploratory | significant / not significant | Names the layer, not the result. |
 | mean embedding effect | effect, difference | \(\beta_0\), fully qualified. |
 | complexity trend | slope, interaction | \(\beta_1\) on centered `dl_length`. |
@@ -554,7 +554,7 @@ Apply these in code, identifiers, log messages, JSON keys, and prose. §7.11 ext
 | DL length | complexity, length, concept length | The scalar token count; one field within complexity. |
 | hardness | semantic difficulty, hardness score | The reasoner-derived fields, collectively. Not a single number. |
 | nesting depth | depth | `depth` alone is the LPGen search parameter. |
-| lift | improvement, delta, gain | F1 over atomic baseline F1. |
+| atomic baseline lift | improvement, delta, gain | F1 over atomic baseline F1. |
 | atomic baseline F1 | baseline, trivial score | Fully qualified; the project has other baselines. |
 | target / hypothesis extension | extension | Always qualified. |
 | number of learning problems | problem_count | Clearer in CLI help. |
@@ -695,7 +695,7 @@ Every flag overrides the corresponding settings-file field.
 | KvsAll | §6 |
 | Lazy import | §4 |
 | Learning problem | §2 |
-| Lift | §2, §6 |
+| Atomic baseline lift | §2, §6 |
 | Local name | §2 |
 | Marginal covariance | §7.3 |
 | Matthews correlation coefficient | §6 |
@@ -792,3 +792,7 @@ Every flag overrides the corresponding settings-file field.
 - Minimum-cell-size behaviour: skipped buckets are logged, absent from `findings`, not otherwise recorded.
 - Pipeline stage 9 (inferential evaluation), previously missing from the stage list.
 - §12 alphabetical index.
+
+### Renamed
+
+- `lift` to `atomic_baseline_lift` (parameter) and `lift` to `atomic baseline lift` (in prose)
