@@ -39,7 +39,10 @@ logger = logging.getLogger(__name__)
 PRIMARY_OUTCOME: str = "lift"
 
 #: Agreement check against the primary. Not a second primary.
-ROBUSTNESS_OUTCOME: str = "f1_score"
+ROBUSTNESS_OUTCOME: tuple[str, ...] = (
+    "f1_score",
+    "normalised_atomic_baseline_lift",
+)
 
 #: Descriptive mechanism outcomes. Reported, never tested confirmatorily.
 MECHANISM_OUTCOMES: tuple[str, ...] = (
@@ -235,6 +238,19 @@ def _outcome_value(
             return None
         return matthews_correlation_coefficient(matrix)
 
+    # computes lift attained as fraction headroom
+    # (F_{1} - F_{ab})/(1 - F_{ab})
+    if outcome == "normalised_atomic_baseline_lift":
+        metrics = result.metrics
+        if metrics is None:
+            return None
+        value = getattr(metrics, "atomic_baseline_lift", None)
+        if value is None:
+            return None
+        if (1 - metrics.atomic_baseline_lift) == 0:
+            return 0.0
+        return float(value/(1 - metrics.atomic_baseline_lift))
+
     metrics = result.metrics
     if metrics is None:
         return None
@@ -323,7 +339,7 @@ def build_paired_design(
         if outcomes is not None
         else (
             PRIMARY_OUTCOME,
-            ROBUSTNESS_OUTCOME,
+            *ROBUSTNESS_OUTCOME,
             *MECHANISM_OUTCOMES,
             *EXPLORATORY_OUTCOMES,
             "empty_hypothesis",
@@ -2096,7 +2112,7 @@ def evaluate_knowledge_base(
 
     # Robustness check with f1_score.
     robustness_observations = (
-        design.for_outcome(ROBUSTNESS_OUTCOME)
+        design.for_outcome(*ROBUSTNESS_OUTCOME)
     ) 
     # robustness_observations = (
     #     primary_observations
