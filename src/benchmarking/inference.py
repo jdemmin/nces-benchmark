@@ -76,7 +76,8 @@ TREND_COVARIATE: str = "extension_ratio"
 EXPLORATORY_Q: float = 0.10
 
 #: Bootstrap resamples, clustered on seed.
-BOOTSTRAP_RESAMPLES: int = 10_000
+# 5 Cluster over 5 seeds -> 5^5 = 3125 resamples
+BOOTSTRAP_RESAMPLES: int = 3125
 
 
 class InferenceError(RuntimeError):
