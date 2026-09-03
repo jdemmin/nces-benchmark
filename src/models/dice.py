@@ -74,27 +74,6 @@ def _assert_dicee_safe_dataset_dir(directory: Path) -> None:
         logger.error(msg)
         raise ValueError(msg)
 
-def stage_dicee_dataset(data_dir: Path, staging_root: Path) -> Path:
-    """Copy the split files into a dicee-safe directory.
-
-    Returns the directory to pass as ``dataset_dir``.
-    """
-    import shutil
-
-    staged = staging_root / "kg"
-    staged.mkdir(parents=True, exist_ok=True)
-    for name in ("train", "valid", "test"):
-        shutil.copyfile(data_dir / f"{name}.txt", staged / f"{name}.txt")
-    logger.info(
-        "Staged DICE dataset from %s to %s (train=%d, valid=%d, test=%d)",
-        data_dir,
-        staged,
-        _count_lines(data_dir / "train.txt"),
-        _count_lines(data_dir / "valid.txt"),
-        _count_lines(data_dir / "test.txt"),
-    )
-    return staged
-
 def _count_lines(path: Path) -> int:
     with path.open(encoding="utf-8") as handle:
         return sum(1 for _ in handle)
@@ -116,7 +95,6 @@ def split_dicee_dataset(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     sorted_tuple = [triple.as_tuple() for triple in triples]
-    # random.Random(seed).shuffle(shuffled)
 
     total = len(sorted_tuple)
     n_train = max(1, int(total * ratios[0]))
@@ -132,7 +110,9 @@ def split_dicee_dataset(
     # DICE requires non-empty validation/test files when eval_model spans them.
     for name in ("valid", "test"):
         if not partitions[name]:
-            partitions[name] = partitions["train"][:1]
+            raise ValueError(f"DICE dataset split resulted in empty {name} partition."
+                             f"Most likely the dataset is too small for the given split ratios."
+            )
 
     logger.info("Split DICE dataset in %s.", output_dir)
     return partitions
@@ -140,7 +120,7 @@ def split_dicee_dataset(
 def stage_partition(
     output_dir: Path,
     partitions: dict[str, list[tuple[str, str, str]]],
-):
+) -> None:
     # See KNOWN_ISSUES.md.
     _assert_dicee_safe_dataset_dir(output_dir)
     for name, rows in partitions.items():
@@ -277,7 +257,10 @@ def export_entity_embeddings(
     if use_local_names:
         frame.index = [local_name(str(name)) for name in frame.index]
         # Duplicate local names would make the entity index mapping ambiguous.
-        frame = frame[~frame.index.duplicated(keep="first")]
+        frame = frame[~frame.index.duplicated(keep=False)]
+        logger.warning(
+            "Duplicate local names found in entity embeddings; all duplicates are removed."
+        )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(output_path)
@@ -336,6 +319,11 @@ class BestReport:
             "validation_error": self.validation_error
         }
 
+@dataclass(frozen=True)
+class BuildEmbeddingResult:
+    results: dict[str, EmbeddingResultDice]
+    model_csv_dim: int
+
 
 def build_embeddings(
     embeddings_dir: Path,
@@ -343,11 +331,10 @@ def build_embeddings(
     embedding_settings: EmbeddingSettings,
     *,
     seed: int,
-    embedding_conditions: Sequence[str],
     nces_embedding_dim: int,
     triples: list[Triple],
     counts: dict[str, int],
-) -> tuple[dict[str, EmbeddingResultDice], int]:
+) -> BuildEmbeddingResult:
     """Run the full embedding stage for every requested condition.
 
     The ``dice`` condition trains the hyperparameter grid and exports the best
@@ -360,85 +347,43 @@ def build_embeddings(
     )
     results: dict[str, EmbeddingResultDice] = {}
     chosen = embedding_settings
-
-    if "dice" in embedding_conditions:
-        seed_everything(seed)
-        best_settings, report, trials, validation_error, run_dir = search_best_embedding_setting(
-            data_dir, embeddings_dir, embedding_settings, seed=seed
-        )
-        write_json(
-            BestReport(
-                best_settings=best_settings, 
-                report=report, 
-                validation_error=validation_error
-            ),
-            embeddings_dir / "best_report.json",
-        )
-        chosen = best_settings
-        output_path = embeddings_dir / f"{best_settings.model_name}.csv"
-        export_entity_embeddings(
-            run_dir, 
-            output_path, 
-        )
-        logger.info(
-            "Cleaned up DICE run directory %s after exporting embeddings", 
-            run_dir
-        )
-        score, _ = selection_score(report)
-        results["dice"] = EmbeddingResultDice(
-            embedding_settings=best_settings,
-            score=score,
-            metrics={
-                section: report[section]
-                for section in ("Train", "Val", "Valid", "Test")
-                if isinstance(report.get(section), dict)
-            },
-            search_trials=trials,
-            validation_error=validation_error,
-            embeddings_path=output_path,
-        )
-        logger.info(
-            "DICE embedding completed: %d entities, dim=%d, score=%.4f, "
-            "validation_error=%s",
-            len(entity_names),
-            best_settings.embedding_dim,
-            score,
-            validation_error,
-        )
+    results["dice"] = _build_dice_embedding_result(
+        embeddings_dir,
+        data_dir,
+        chosen,
+        seed=seed,
+        entity_names=entity_names,
+    )
     # Match the exported DICE width, not the configured dimension: some
     # models store several components per dimension.
-    csv_dim: int
-    try:
-        csv_dim = get_csv_dimension(embeddings_dir / f"{chosen.model_name}.csv")
-    except FileNotFoundError as e:
-        logger.error(
-            "Failed to get CSV dimension for DICE embeddings: %s. "
-            "Falling back to the configured embedding dimension %d.",
-            e,
-            chosen.embedding_dim,
-        )
-        raise
-
-    if "random" in embedding_conditions:
-        seed_everything(seed)
-        output_path = embeddings_dir / f"{chosen.model_name}_random.csv"
-        generate_random_embeddings(
-            entity_names,
-            output_path,
-            embedding_dim=nces_embedding_dim,
-            seed=seed,
-        )
-        results["random"] = EmbeddingResultDice(
-            embedding_settings=chosen,
-            embeddings_path=output_path,
-        )
-        logger.info(
-            "Random embedding baseline completed: %d entities, dim=%d",
-            len(entity_names),
-            csv_dim,
-        )
-
-    report_path = embeddings_dir / "embedding_report.json"
+    csv_dim = get_csv_dimension(embeddings_dir / f"{chosen.model_name}.csv")
+    seed_everything(seed) 
+    # random_embedding_output_path =embeddings_dir / f"{chosen.model_name}_random.csv"
+    # generate_random_embeddings(
+    #     entity_names=entity_names,
+    #     output_path=random_embedding_output_path,
+    #     embedding_dim=csv_dim,
+    #     seed=seed,
+    # )
+    # results["random"] = EmbeddingResultDice(
+    #     embedding_settings=chosen,
+    #     embeddings_path=random_embedding_output_path,
+    # )
+    generate_shuffle_embeddings(
+        input_path=embeddings_dir / f"{chosen.model_name}.csv",
+        output_path=embeddings_dir / f"{chosen.model_name}_shuffle.csv",
+        embedding_dim=csv_dim,
+        seed=seed,
+    )
+    results["shuffle"] = EmbeddingResultDice(
+        embedding_settings=chosen,
+        embeddings_path=embeddings_dir / f"{chosen.model_name}_shuffle.csv",
+    )
+    logger.info(
+        "Random embedding baseline completed: %d entities, dim=%d",
+        len(entity_names),
+        nces_embedding_dim,
+    )
     write_json(
         {
             "triple_counts": counts,
@@ -447,9 +392,64 @@ def build_embeddings(
                 name: result.to_dict() for name, result in results.items()
             },
         },
-        report_path,
+        embeddings_dir / "embedding_report.json",
     )
-    return results, csv_dim
+    return BuildEmbeddingResult(
+        results=results,
+        model_csv_dim=csv_dim,
+    )
+
+
+def _build_dice_embedding_result(
+    embeddings_dir: Path,
+    data_dir: Path,
+    embedding_settings: EmbeddingSettings,
+    *,
+    seed: int,
+    entity_names: list[str],
+) -> EmbeddingResultDice:
+    seed_everything(seed)
+    best_settings, report, trials, validation_error, run_dir = search_best_embedding_setting(
+        data_dir, embeddings_dir, embedding_settings, seed=seed
+    )
+    write_json(
+        BestReport(
+            best_settings=best_settings, 
+            report=report, 
+            validation_error=validation_error
+        ),
+        embeddings_dir / "best_report.json",
+    )
+    output_path = embeddings_dir / f"{best_settings.model_name}.csv"
+    export_entity_embeddings(
+        run_dir, 
+        output_path, 
+    )
+    logger.info(
+        "Cleaned up DICE run directory %s after exporting embeddings", 
+        run_dir
+    )
+    score, _ = selection_score(report)
+    logger.info(
+        "DICE embedding completed: %d entities, dim=%d, score=%.4f, "
+        "validation_error=%s",
+        len(entity_names),
+        best_settings.embedding_dim,
+        score,
+        validation_error,
+    ) 
+    return EmbeddingResultDice(
+        embedding_settings=best_settings,
+        score=score,
+        metrics={
+            section: report[section]
+            for section in ("Train", "Val", "Valid", "Test")
+            if isinstance(report.get(section), dict)
+        },
+        search_trials=trials,
+        validation_error=validation_error,
+        embeddings_path=output_path,
+    )
 
 
 def _entity_embedding_matrix(model: Any) -> np.ndarray:
@@ -500,3 +500,20 @@ def get_csv_dimension(embeddings_path: Path) -> int:
         )
         raise FileNotFoundError(f"Embeddings CSV {embeddings_path} is empty.")
     return frame.shape[1]
+
+def generate_shuffle_embeddings(
+    input_path: Path,
+    output_path: Path,
+    embedding_dim: int,
+    seed: int,
+) -> None:
+    """Generate a CSV file with shuffled embeddings for the entities in the input CSV."""
+    import numpy as np
+    import pandas as pd
+
+    frame = pd.read_csv(input_path, index_col=0)
+    entity_names = frame.index.tolist()
+    rng = np.random.default_rng(seed)
+    embeddings = rng.standard_normal((len(entity_names), embedding_dim))
+    shuffled_frame = pd.DataFrame(embeddings, index=entity_names)
+    shuffled_frame.to_csv(output_path)
