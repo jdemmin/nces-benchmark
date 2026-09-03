@@ -97,9 +97,8 @@ class RunPaths:
     def embedding_report_path(self) -> Path:
         return self.embeddings_dir / "embedding_report.json"
 
-    def entity_embeddings_path(self, model_name: str, *, random: bool) -> Path:
-        suffix = "_random" if random else ""
-        return self.embeddings_dir / f"{model_name}{suffix}.csv"
+    def entity_embeddings_path(self, model_name: str, *, suffix: str) -> Path:
+        return self.embeddings_dir / f"{model_name}_{suffix}.csv"
 
     def dicee_run_dir(self, model_name: str) -> Path:
         return self.embeddings_dir / f"{model_name}_dicee_run"
