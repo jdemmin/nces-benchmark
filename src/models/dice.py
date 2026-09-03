@@ -259,16 +259,19 @@ def export_entity_embeddings(
         # Duplicate local names would make the entity index mapping ambiguous.
         frame = frame[~frame.index.duplicated(keep=False)]
         logger.warning(
-            "Duplicate local names found in entity embeddings; all duplicates are removed."
+            f"Duplicate local names found in entity embeddings; all duplicates are removed. "
+            f"{frame.index[frame.index.duplicated(keep=False)].tolist()}",
         )
+    duplicated: int = frame.index.duplicated(keep=False).sum()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(output_path)
     logger.info(
-        "Exported %d entity embeddings (dim=%d) to %s",
+        "Exported %d entity embeddings (dim=%d) to %s (removed %d duplicates)",
         frame.shape[0],
         frame.shape[1],
         output_path,
+        duplicated,
     )
     return output_path
 
