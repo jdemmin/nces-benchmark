@@ -108,7 +108,7 @@ def extension_size_summary(design: PairedDesign) -> ExtensionSizeSummary:
     needed = {
         "hypothesis_extension_size_treated",
         "hypothesis_extension_size_control",
-        "target_extension_size_treated",
+        "target_extension_size",
     }
     if not needed <= set(frame.columns):
         return ExtensionSizeSummary(
@@ -116,10 +116,16 @@ def extension_size_summary(design: PairedDesign) -> ExtensionSizeSummary:
         )
 
     per_problem = frame.groupby("problem_id").mean(numeric_only=True)
-    target = per_problem["target_extension_size_treated"]
-    valid = target > 0
+    target = per_problem["target_extension_size"]
+
+    target_valid = target.gt(0) & target.notna()
+    
+
+    def valid_mask(column: str):
+        return target_valid & per_problem[column].notna()
 
     def ratio_of_means(column: str) -> float | None:
+        valid = valid_mask(column)
         subset = per_problem.loc[valid, column]
         denominator = target[valid].mean()
         if not len(subset) or not denominator:
@@ -127,8 +133,12 @@ def extension_size_summary(design: PairedDesign) -> ExtensionSizeSummary:
         return float(subset.mean() / denominator)
 
     def mean_of_ratios(column: str) -> float | None:
-        subset = per_problem.loc[valid, column] / target[valid]
-        return float(subset.mean()) if len(subset) else None
+        valid = valid_mask(column)
+        hypothesis = per_problem.loc[valid, column]
+        denominator = target.loc[valid]
+        if hypothesis.empty:
+            return None
+        return float((hypothesis / denominator).mean())
 
     return ExtensionSizeSummary(
         ratio_of_means_treated=ratio_of_means(
@@ -143,7 +153,7 @@ def extension_size_summary(design: PairedDesign) -> ExtensionSizeSummary:
         mean_of_ratios_control=mean_of_ratios(
             "hypothesis_extension_size_control"
         ),
-        n_with_target_size=int(valid.sum()),
+        n_with_target_size=int(target_valid.sum()),
         n_problems=design.n_problems,
     )
 
@@ -179,16 +189,25 @@ def breakdown(
         return pd.DataFrame()
 
     if by == "extension_ratio":
+        values = per_problem["key"].astype(float)
         # Banding is legitimate here in a way that banding `depth` is not:
         # the variable functions as a class-balance degeneracy indicator
         # rather than a contiguous predictor under test, and the edges are
         # fixed in advance.
-        per_problem["key"] = pd.cut(
-            per_problem["key"].astype(float),
+        intervals = pd.cut(
+            values,
             bins=list(EXTENSION_RATIO_BANDS),
             include_lowest=True,
             right=False,
-        ).astype(str)
+        )
+        labels = intervals.astype(object)
+        final_mask = values == EXTENSION_RATIO_BANDS[-1]
+        labels.loc[final_mask] = pd.Interval(
+            EXTENSION_RATIO_BANDS[-2],
+            EXTENSION_RATIO_BANDS[-1],
+            closed="both",
+        )
+        per_problem["key"] = labels.astype(str)
 
     rows: list[dict[str, Any]] = []
     for key, group in per_problem.groupby("key", observed=True):
