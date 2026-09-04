@@ -88,7 +88,7 @@ def marginal_relationships(trials: pd.DataFrame) -> pd.DataFrame:
                         "parameter": parameter,
                         "rho": None,
                         "p_value": None,
-                        "n_trials": int(len(values)),
+                        "n_trials": len(values),
                     }
                 )
                 continue
@@ -102,7 +102,7 @@ def marginal_relationships(trials: pd.DataFrame) -> pd.DataFrame:
                     "parameter": parameter,
                     "rho": None if np.isnan(rho) else float(rho),
                     "p_value": None if np.isnan(p_value) else float(p_value),
-                    "n_trials": int(len(values)),
+                    "n_trials": len(values),
                 }
             )
     return pd.DataFrame(rows)
