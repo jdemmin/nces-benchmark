@@ -50,7 +50,7 @@ class ShortfallLedger:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "block_notes": self.block_notes,
-            "unavailable_outcomes": self.unavailable_outcomes,
-            "problem_errors": self.problem_errors,
+            "block_notes": self.block_notes.copy(),
+            "unavailable_outcomes": self.unavailable_outcomes.copy(),
+            "problem_errors": self.problem_errors.copy(),
         }
