@@ -7,25 +7,39 @@ import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from src.benchmarking.metrics import (
-    calculate_extension_metrics,
-    compute_atomic_baseline_lift,
-)
 from src.config import EmbeddingSettings, NCESSettings
 from src.data.lp import LearningProblem
-from src.data.ontology import concept_extension
-from src.data.results import (
-    EmbeddingResult,
-    LearningProblemResult,
-    MetricsResult,
-    NCESStats,
-    TargetExtensionStructure,
-)
+from src.data.results import NCESStats
+from src.eval.metrics import score_extensions
+from src.eval.pairing import Observation
+from src.eval.reasoning import ExtensionOracle
 from src.random_utils import seed_everything
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class NCESEvaluationResult:
+    """One condition's evaluation of a learning-problem split, in eval/ terms."""
+
+    split_name: str
+    observations: list[Observation]
+    number_of_problems: int
+    number_of_successful_problems: int
+    nces_stats: NCESStats
+
+    def to_dict(self) -> dict:
+        return {
+            "split_name": self.split_name,
+            "observations": [asdict(o) for o in self.observations],
+            "number_of_problems": self.number_of_problems,
+            "number_of_successful_problems": self.number_of_successful_problems,
+            "nces_stats": self.nces_stats.to_dict(),
+        }
+
 
 
 def prepare_nces_training_data(
@@ -218,27 +232,28 @@ def evaluate_nces(
     m: int,
     target_extensions: Mapping[str, frozenset[str]] | None = None,
     *,
-    knowledge_base,
+    oracle: ExtensionOracle,
     all_individuals: Sequence[str],
     split_name: str,
-    trained_model_settings: EmbeddingSettings,
+    condition: str,
+    knowledge_base_name: str,
     seed: int,
     degraded: bool,
-) -> EmbeddingResult:
+) -> NCESEvaluationResult:
     """Evaluate the trained NCES learner on a held-out learning-problem split.
 
     Each hypothesis is rendered to DL syntax, its extension is computed with
-    the reasoner, and the extension is compared to the target extension.
+    the reasoner (cached in ``oracle``), and the extension is compared to the
+    target extension over the whole universe, never the sampled examples.
     """
     
     if not problems:
         logger.warning(
             "No learning problems provided for evaluation; returning empty results."
         )
-        return EmbeddingResult(
+        return NCESEvaluationResult(
             split_name=split_name,
-            learning_problem_results=[],
-            embedding_settings=trained_model_settings,
+            observations=[],
             nces_stats=NCESStats(
                 learner_name=settings.learner_name,
                 runtime_seconds=0.0,
@@ -257,31 +272,30 @@ def evaluate_nces(
         load_pretrained=True,
         m=m,
     )
-    # Evaluate each learning problem (fit) and collect the results.
-    records = _build_records(
+    # Evaluate each learning problem (fit) and collect the observations.
+    observations, n_errors = _score_problems(
         problems=problems,
         model=model,
-        knowledge_base=knowledge_base,
+        oracle=oracle,
         target_extensions=target_extensions,
         all_individuals=all_individuals,
         seed=seed,
+        condition=condition,
+        knowledge_base_name=knowledge_base_name,
     )
     final_time = round(time.perf_counter() - eval_timer, 3)
-    scored = [record for record in records if record.error is None]
-    logger.info("Collecting mean metrics across %d successful problems", len(scored))
-    logger.info("Finished computing mean metrics across %d successful problems", len(scored))
+    n_successful = len(problems) - n_errors
     logger.info(
         "NCES evaluation completed in %.3f seconds: %d problems, %d successful",
         time.perf_counter() - eval_timer,
-        len(records),
-        len(scored),
+        len(problems),
+        n_successful,
     )
-    return EmbeddingResult(
+    return NCESEvaluationResult(
         split_name=split_name,
-        number_of_problems=len(records),
-        number_of_successful_problems=len(scored),
-        learning_problem_results=sorted(records, key=lambda r: r.learning_problem.id),
-        embedding_settings=trained_model_settings,
+        number_of_problems=len(problems),
+        number_of_successful_problems=n_successful,
+        observations=observations,
         nces_stats=NCESStats(
             learner_name=settings.learner_name,
             runtime_seconds=final_time,
@@ -320,27 +334,33 @@ def _get_valid_dir_path(path: Path, nces_settings: NCESSettings) -> Path:
 def _fingerprint(net) -> float:
     return sum(float(p.detach().abs().sum()) for p in net.parameters())
 
+def _fingerprint(net) -> float:
+    return sum(float(p.detach().abs().sum()) for p in net.parameters())
+
 # TODO: Keep track of the signature of the function to avoid accidental changes that break the benchmark.
-def _build_records(
-        problems: Sequence[LearningProblem], 
+def _score_problems(
+        problems: Sequence[LearningProblem],
         model,
-        knowledge_base, 
-        target_extensions, 
-        all_individuals,
+        oracle: ExtensionOracle,
+        target_extensions: Mapping[str, frozenset[str]] | None,
+        all_individuals: Sequence[str],
         seed: int,
-    ) -> list[LearningProblemResult]:
+        condition: str,
+        knowledge_base_name: str,
+    ) -> tuple[list[Observation], int]:
     from ontolearn.learning_problem import PosNegLPStandard
     from owlapy.class_expression import OWLClassExpression
     from owlapy.owl_individual import OWLNamedIndividual
     from owlapy.render import DLSyntaxObjectRenderer
 
     renderer = DLSyntaxObjectRenderer()
-    records: list[LearningProblemResult] = []
+    universe_size = len(all_individuals)
+    observations: list[Observation] = []
+    n_errors = 0
     for problem in sorted(problems, key=lambda p: p.id):
         positives = {OWLNamedIndividual(iri) for iri in sorted(problem.pos_example)}
         negatives = {OWLNamedIndividual(iri) for iri in sorted(problem.neg_example)}
         lp = PosNegLPStandard(pos=set(positives), neg=set(negatives))
-        started = time.perf_counter()
         try:
             seed_everything(seed)  # Ensure reproducibility for NCES fitting
             predictions = model.fit(lp)
@@ -366,68 +386,56 @@ def _build_records(
                 type(error).__name__,
                 error,
             )
-            failed_learning_problem = LearningProblemResult(
-                learning_problem=problem,
-                error=type(error).__name__ + ": " + str(error),
-            )
-            records.append(failed_learning_problem)
+            n_errors += 1
             continue
         del predictions
         expression = getattr(hypothesis, "concept", hypothesis)
         hypothesis_dl = renderer.render(expression) if expression else ""
-        predicted = (
-            concept_extension(knowledge_base, hypothesis_dl)
-            if hypothesis_dl
-            else frozenset()
-        )
+        # Unparseable hypotheses score as an empty extension rather than a
+        # hard error, matching the reasoner's own parse-failure leniency.
+        predicted = oracle.extension_or_none(hypothesis_dl) or frozenset()
         # Reuse the extension computed during hardness annotation; the two
         # stages must agree, including when the parse fallback fired.
         if target_extensions is not None and problem.id in target_extensions:
             target = target_extensions[problem.id]
         else:
-            target = concept_extension(knowledge_base, problem.target_concept)
+            target = oracle.extension_or_none(problem.target_concept)
             target = target or frozenset(problem.pos_example)
 
-        runtime = round(time.perf_counter() - started, 3)
-        metrics = calculate_extension_metrics(predicted, target, all_individuals)
-        atomic_baseline_lift = compute_atomic_baseline_lift(complexity=problem.complexity, f1=metrics.f1)
-        if atomic_baseline_lift is None:
-            logger.warning(
-                "Learning problem %s has no hardness annotation; "
-                "atomic_baseline_lift is undefined and will be reported as 0.0",
-                problem.id,
+        hardness = problem.complexity.hardness
+        metrics = score_extensions(
+            hypothesis_extension=predicted,
+            target_extension=target,
+            universe_size=universe_size,
+            atomic_baseline=hardness.atomic_baseline_f1,
+        )
+        observations.append(
+            Observation(
+                condition=condition,
+                knowledge_base=knowledge_base_name,
+                seed=seed,
+                problem_id=problem.id,
+                hypothesis=hypothesis_dl,
+                depth=problem.complexity.depth,
+                dl_length=problem.complexity.dl_length,
+                expressivity=problem.complexity.expressivity,
+                extension_ratio=hardness.extension_ratio,
+                atomic_baseline_f1=hardness.atomic_baseline_f1,
+                values={
+                    "abl": metrics.abl,
+                    "abl_norm": metrics.abl_norm,
+                    "f1": metrics.f1,
+                    "precision": metrics.precision,
+                    "recall": metrics.recall,
+                    "accuracy": metrics.accuracy,
+                    "semantic_equivalence": metrics.semantic_equivalence,
+                    "hypothesis_extension_size": float(
+                        metrics.hypothesis_extension_size
+                    ),
+                },
             )
-            atomic_baseline_lift = 0.0
-        metric_result = MetricsResult(
-            accuracy=metrics.accuracy,
-            f1_score=metrics.f1,
-            jaccard=metrics.jaccard,
-            precision=metrics.precision,
-            recall=metrics.recall,
-            intersection=metrics.intersection,
-            union=metrics.union,
-            semantic_equivalence=metrics.semantic_equivalence,
-            atomic_baseline_lift=atomic_baseline_lift, # type: ignore //is checked above
         )
-
-        negative_extension = set(all_individuals) - set(target)
-
-        learning_problem_result = LearningProblemResult(
-            learning_problem=problem,
-            hypothesis=hypothesis_dl,
-            target_extension=TargetExtensionStructure(
-                positive=len(target),
-                negative=len(negative_extension),
-            ),
-            hypothesis_extension=TargetExtensionStructure(
-                positive=len(predicted),
-                negative=len(set(all_individuals) - set(predicted)),
-            ),
-            metrics=metric_result,
-            runtime=runtime,
-        )
-        records.append(learning_problem_result)
-    return records
+    return observations, n_errors
 
 
 def assert_model_dir_contains_needed_files(

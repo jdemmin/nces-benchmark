@@ -10,9 +10,9 @@ from os import makedirs
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 from ontolearn.knowledge_base import KnowledgeBase
 
-from src.benchmarking.inference import evaluate_suite, write_evaluation
 from src.config import BenchmarkConfiguration, DataGenerationSettings, _read_json
 from src.data.complexity import annotate_hardness
 from src.data.lp import (
@@ -27,10 +27,10 @@ from src.data.ontology import (
     concept_extension,
     individual_iris,
     load_knowledge_base,
+    local_name_collisions,
     parse_triples,
 )
 from src.data.results import (
-    EmbeddingResult,
     HardnessAnnotationResult,
     KnowledgeBaseFailure,
     KnowledgeBaseStats,
@@ -39,6 +39,10 @@ from src.data.results import (
     OntologyPhaseResult,
     SingleRunResult,
 )
+from src.eval.pairing import observations_to_frame
+from src.eval.reasoning import ExtensionOracle
+from src.eval.rq2 import Trial, trials_to_frame
+from src.eval.suite import analyse_suite
 from src.logging_utils import configure_logging
 from src.models.dice import (
     BuildEmbeddingResult,
@@ -47,6 +51,7 @@ from src.models.dice import (
     split_dicee_dataset,
     stage_partition,
 )
+from src.models.hpo_search_utils import MRRNotFound
 from src.models.nces import (
     evaluate_nces,
     prepare_nces_training_data,
@@ -132,12 +137,43 @@ def run_benchmark(
                 continue
             reports.setdefault(kb_name, {})[seed] = report
     try:
-        # TODO explicitly mention that here we use a independent seed (default `0`)
-        write_evaluation(
-            evaluate_suite(runs_by_knowledge_base=reports), 
-            output_path=benchmark_dir / f"{config.project.benchmark_name}_suite_evaluation.json", 
-            paired_observations_path=benchmark_dir / f"{config.project.benchmark_name}_paired_observation.json"
-        )  
+        all_observations = [
+            observation
+            for kb_reports in reports.values()
+            for report in kb_reports.values()
+            for observation in report.observations
+        ]
+        all_trials = [
+            trial
+            for kb_reports in reports.values()
+            for report in kb_reports.values()
+            for trial in report.trials
+        ]
+        all_quality_rows = [
+            row
+            for kb_reports in reports.values()
+            for report in kb_reports.values()
+            for row in report.quality
+        ]
+        frame = observations_to_frame(all_observations)
+        analysis = analyse_suite(
+            frame,
+            quality=pd.DataFrame(all_quality_rows),
+            trials=trials_to_frame(all_trials),
+        )
+        analysis.write(
+            benchmark_dir / f"{config.project.benchmark_name}_suite_evaluation.json"
+        )
+        write_json(
+            payload={"observations": frame.to_dict(orient="records")},
+            path=benchmark_dir / f"{config.project.benchmark_name}_paired_observations.json",
+        )
+        try:
+            run_substudy(config, analysis, output_dir=benchmark_dir)
+        except Exception:
+            # The confirmatory main-suite analysis above must survive a
+            # sub-study failure; sub-study failures are reported, not fatal.
+            logger.exception("RQ2 configuration sub-study failed; main suite results are unaffected.")
     finally:
         if handler is not None:
             logging.getLogger().removeHandler(handler)
@@ -157,6 +193,142 @@ def run_benchmark(
 def _copy_from_temp_dir(from_path: Path, to_path: Path):
     import shutil
     shutil.copytree(from_path, to_path, dirs_exist_ok=True)
+
+
+def run_substudy(
+    config: BenchmarkConfiguration,
+    analysis: Any,
+    *,
+    output_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    """Run the RQ2 configuration sub-study on the pre-selected (kb, architecture).
+
+    Four configurations drawn from that architecture's own trial record
+    (best/worst/median validation MRR, plus one deliberately extreme learning
+    rate) are each trained, exported, and passed to NCES under the same
+    benchmark seeds as the main suite, with every other factor unchanged.
+    Observations are persisted for manual/future analysis; this is a
+    four-arm factorial comparison, not a paired contrast against ``random``.
+    """
+    from dataclasses import replace
+
+    from src.eval.pairing import Observation
+    from src.models.dice import (
+        export_entity_embeddings,
+        get_csv_dimension,
+        train_embedding_model,
+    )
+
+    selection = analysis.hyperparameters.get("substudy_selection")
+    configurations = analysis.hyperparameters.get("substudy_configurations")
+    if not selection or not configurations:
+        logger.info(
+            "No sub-study selection available; skipping the configuration sub-study."
+        )
+        return None
+
+    knowledge_base_name = selection["knowledge_base"]
+    architecture = selection["condition"]
+    data_generation_setting = next(
+        (d for d in config.data_generation if d.kb == knowledge_base_name), None
+    )
+    if data_generation_setting is None:
+        raise ValueError(f"No data generation settings for {knowledge_base_name!r}.")
+
+    base = Path(tempfile.TemporaryDirectory().name)
+    substudy_dir = base / "substudy"
+    observations: list[Observation] = []
+
+    for seed in config.project.seeds:
+        seed_everything(seed)
+        kb_path = resolve_knowledge_base(knowledge_base_name)
+        paths = run_paths(str(substudy_dir), seed, knowledge_base_name, output_dir=base)
+        paths.mkdirs()
+        ontology_phase_result, learning_problem_phase_result = _generate_train_artifacts(
+            config=config,
+            kb_path=kb_path,
+            kb_name=knowledge_base_name,
+            paths=paths,
+            data_generation_setting=data_generation_setting,
+        )
+        ontology_parse_result = ontology_phase_result.ontology_parse_result
+        train_data = prepare_nces_training_data(
+            learning_problem_phase_result.split["train"],
+            paths.nces_data_dir / "nces_train_data.json",
+            seed=seed,
+        )
+        with ExtensionOracle(
+            ontology_path=kb_path,
+            cache_path=paths.ontology_parse_data_dir / "extension_cache.json",
+        ) as oracle:
+            for spec in configurations:
+                condition = f"{architecture}__{spec['label']}"
+                settings = replace(
+                    config.embedding,
+                    model_name=architecture,
+                    batch_size=int(spec["batch_size"]),
+                    learning_rate=float(spec["learning_rate"]),
+                    epochs=int(spec["epochs"]),
+                )
+                run_dir = paths.embeddings_dir / condition / "run"
+                seed_everything(seed)
+                train_embedding_model(
+                    paths.embeddings_data_dir, run_dir, settings, seed=seed
+                )
+                embeddings_path = paths.entity_embeddings_path(condition)
+                export_entity_embeddings(run_dir, embeddings_path)
+                m = get_csv_dimension(embeddings_path)
+                trained_model_path = paths.nces_suffix_dir(condition)
+                training = train_nces(
+                    kb_path=kb_path,
+                    embeddings_path=embeddings_path,
+                    trained_models_dir=trained_model_path,
+                    train_data=train_data,
+                    settings=config.nces,
+                    m=m,
+                    seed=seed,
+                )
+                evaluation = evaluate_nces(
+                    kb_path=kb_path,
+                    embeddings_path=embeddings_path,
+                    trained_models_dir=trained_model_path,
+                    problems=learning_problem_phase_result.split["test"],
+                    settings=config.nces,
+                    oracle=oracle,
+                    all_individuals=ontology_parse_result.all_individuals,
+                    target_extensions=learning_problem_phase_result.target_extensions,
+                    split_name="test",
+                    condition=condition,
+                    knowledge_base_name=knowledge_base_name,
+                    m=m,
+                    seed=seed,
+                    degraded=training.degraded,
+                )
+                observations.extend(evaluation.observations)
+        _clean_dir(path=paths.seed_dir, make_zip=False)
+
+    frame = observations_to_frame(observations)
+    out = output_dir or OUTPUT_DIR
+    write_json(
+        payload={
+            "selection": selection,
+            "configurations": configurations,
+            "observations": frame.to_dict(orient="records"),
+        },
+        path=out / f"{config.project.benchmark_name}_substudy_observations.json",
+    )
+    logger.info(
+        "Completed RQ2 configuration sub-study for %s/%s: %d observations",
+        knowledge_base_name,
+        architecture,
+        len(observations),
+    )
+    return {
+        "knowledge_base": knowledge_base_name,
+        "condition": architecture,
+        "n_observations": len(observations),
+    }
+
 
 def _generate_train_artifacts(
         config: BenchmarkConfiguration,
@@ -234,17 +406,22 @@ def run_single(
     )
     split = learning_problem_phase_result.split
     target_extensions = learning_problem_phase_result.target_extensions
-    single_run_result = _stage_train_eval_nces(
-        split=split,
-        paths=paths,
-        kb_path=kb_path,
-        knowledge_base=ontology_parse_result.knowledge_base,
-        all_individuals=ontology_parse_result.all_individuals,
-        target_extensions=target_extensions,
-        build_embedding_result=build_embedding_result,
-        config=config,
-        seed=seed
-    )
+    with ExtensionOracle(
+        ontology_path=kb_path,
+        cache_path=paths.ontology_parse_data_dir / "extension_cache.json",
+    ) as oracle:
+        single_run_result = _stage_train_eval_nces(
+            split=split,
+            paths=paths,
+            kb_path=kb_path,
+            knowledge_base_name=knowledge_base_name,
+            all_individuals=ontology_parse_result.all_individuals,
+            target_extensions=target_extensions,
+            build_embedding_result=build_embedding_result,
+            config=config,
+            seed=seed,
+            oracle=oracle,
+        )
     logger.info(
         "Completed Stage 5: NCES training and evaluation for all conditions."
     )
@@ -255,11 +432,27 @@ def run_single(
     atomic_extensions = compute_atomic_class_extensions(
         knowledge_base=ontology_parse_result.knowledge_base
     )
+    entity_vocabulary = {
+        triple.subject for triple in ontology_parse_result.triples
+    } | {triple.object for triple in ontology_parse_result.triples}
+    collisions = local_name_collisions(entity_vocabulary)
+    if collisions:
+        logger.warning(
+            "%s: %d local name(s) collide across %d distinct IRIs; all "
+            "colliding IRIs are dropped from the entity vocabulary.",
+            knowledge_base_name,
+            len(collisions),
+            sum(len(members) for members in collisions.values()),
+        )
     knowledge_base_stats = KnowledgeBaseStats(
         knowledge_base_name=knowledge_base_name,
         number_of_individuals=len(ontology_parse_result.all_individuals),
         number_of_triples=len(ontology_parse_result.triples),
         number_of_atomic_classes=len(atomic_extensions),
+        number_of_colliding_local_names=len(collisions),
+        number_of_entities_dropped_to_collisions=sum(
+            len(members) for members in collisions.values()
+        ),
     )
     write_json(
         payload=knowledge_base_stats,
@@ -471,18 +664,25 @@ def _hash_data_generation_settings(data_generation_settings: DataGenerationSetti
 
 
 def _remove_trials(path: Path) -> None:
-    """Remove embeddings that are not used in the benchmark run."""
+    """Remove embeddings that are not used in the benchmark run.
+
+    Each condition trains in its own subdirectory (``path/<condition>``), so
+    trial artifacts are one level deeper than they used to be.
+    """
 
     logger.info(
         "Proceeding to remove unused embedding files with keyword ``trial`` in %s", path
     )
-    for dir in path.iterdir():
-        if dir.is_dir() and "trial" in dir.name:
-            for subfile in dir.iterdir():
-                if subfile.is_file():
-                    logger.info("Removing unused embedding file %s", subfile)
-                    subfile.unlink()
-            dir.rmdir()
+    for condition_dir in path.iterdir():
+        if not condition_dir.is_dir():
+            continue
+        for dir in condition_dir.iterdir():
+            if dir.is_dir() and "trial" in dir.name:
+                for subfile in dir.iterdir():
+                    if subfile.is_file():
+                        logger.info("Removing unused embedding file %s", subfile)
+                        subfile.unlink()
+                dir.rmdir()
     logger.info(
         "Completed removal of unused embedding files with keyword ``trial`` in %s", path
     )
@@ -507,6 +707,7 @@ def _embedding_stage(
             nces_embedding_dim=benchmark_settings.nces.embedding_dim,
             triples=triples,
             counts=counts,
+            conditions=benchmark_settings.project.embedding_conditions,
     )
 
 
@@ -566,15 +767,65 @@ def _stage_hardness_annotation(
     )
 
 
+def _dice_trials_to_eval_trials(
+    raw_trials: list[dict[str, Any]],
+    *,
+    condition: str,
+    knowledge_base: str,
+    seed: int,
+) -> list[Trial]:
+    """Convert one architecture's raw HPO trial records into RQ2's schema."""
+    converted: list[Trial] = []
+    for index, record in enumerate(raw_trials):
+        error = record.get("error")
+        score = record.get("score")
+        converted.append(
+            Trial(
+                condition=condition,
+                knowledge_base=knowledge_base,
+                seed=seed,
+                trial_index=int(record.get("trial", index)),
+                configuration={
+                    "batch_size": record.get("batch_size"),
+                    "learning_rate": record.get("learning_rate"),
+                    "epochs": record.get("epochs"),
+                },
+                score=None if score is None else float(score),
+                used_validation_fallback=(
+                    record.get("validation_error")
+                    == MRRNotFound.ValidationUnavailable.value
+                ),
+                failed=error is not None or score is None,
+                error=error,
+            )
+        )
+    return converted
+
+
+def _ranking_metrics_from_report(metrics: dict[str, Any]) -> dict[str, float | None]:
+    """Validation MRR/Hits@k, falling back to test — same order as selection."""
+    for section in ("Val", "Valid", "Test"):
+        block = metrics.get(section)
+        if isinstance(block, dict) and "MRR" in block:
+            return {
+                "mrr": block.get("MRR"),
+                "hits_at_1": block.get("H@1"),
+                "hits_at_3": block.get("H@3"),
+                "hits_at_10": block.get("H@10"),
+            }
+    return {"mrr": None, "hits_at_1": None, "hits_at_3": None, "hits_at_10": None}
+
+
 def _stage_train_eval_nces(
         split: dict[str, list[LearningProblem]],
         paths: RunPaths, 
         kb_path: Path,
-        knowledge_base: KnowledgeBase, 
+        knowledge_base_name: str,
         all_individuals: list[str], 
         target_extensions: dict[str, frozenset[str]], 
         build_embedding_result: BuildEmbeddingResult,
-        config: BenchmarkConfiguration, seed: int
+        config: BenchmarkConfiguration, seed: int,
+        oracle: ExtensionOracle,
     ) -> SingleRunResult:
     """
     Train and evaluate NCES for each embedding condition.
@@ -585,14 +836,13 @@ def _stage_train_eval_nces(
         split["train"], paths.nces_data_dir / "nces_train_data.json", seed=seed
     )
     logger.info("Prepared NCES training data")
-    conditions: dict[str, EmbeddingResult] = {}
+    result = SingleRunResult(knowledge_base=knowledge_base_name, seed=seed)
     for condition in config.project.embedding_conditions:
-        embeddings_file_path = paths.entity_embeddings_path(
-            model_name=config.embedding.model_name, suffix=condition
-        )
+        embeddings_file_path = paths.entity_embeddings_path(condition)
         # location where the trained model will be saved
         # and parent directory where the evaluation will read from
         trained_model_path = paths.nces_suffix_dir(condition)
+        m = build_embedding_result.model_csv_dim[condition]
         logger.info(
             "Starting NCES training for condition '%s'" \
             "with embeddings from '%s'",
@@ -605,7 +855,7 @@ def _stage_train_eval_nces(
             trained_models_dir=trained_model_path,
             train_data=train_data,
             settings=config.nces,
-            m=build_embedding_result.model_csv_dim,
+            m=m,
             seed=seed,
         )
         write_json(
@@ -628,12 +878,13 @@ def _stage_train_eval_nces(
             trained_models_dir=trained_model_path,
             problems=split["test"],
             settings=config.nces,
-            knowledge_base=knowledge_base,
+            oracle=oracle,
             all_individuals=all_individuals,
             target_extensions=target_extensions,
             split_name="test",
-            m=build_embedding_result.model_csv_dim,
-            trained_model_settings=build_embedding_result.results[condition].embedding_settings,
+            condition=condition,
+            knowledge_base_name=knowledge_base_name,
+            m=m,
             seed=seed,
             degraded=training.degraded,
         )
@@ -641,9 +892,32 @@ def _stage_train_eval_nces(
             "Completed NCES evaluation for condition '%s'.",
             condition,
         )
-        conditions[condition] = evaluation
-    return SingleRunResult(
-        knowledge_base=kb_path.name,
-        random_embedding_result=conditions.get("random", None),
-        dice_embedding_result=conditions.get("dice", None),
-    )
+        result.observations.extend(evaluation.observations)
+        result.condition_stats[condition] = evaluation.nces_stats
+
+        if condition != "random":
+            dice_result = build_embedding_result.results[condition]
+            result.trials.extend(
+                _dice_trials_to_eval_trials(
+                    dice_result.search_trials,
+                    condition=condition,
+                    knowledge_base=knowledge_base_name,
+                    seed=seed,
+                )
+            )
+            abl_values = [
+                v for o in evaluation.observations
+                if (v := o.values.get("abl")) is not None
+            ]
+            result.quality.append(
+                {
+                    "condition": condition,
+                    "knowledge_base": knowledge_base_name,
+                    "seed": seed,
+                    **_ranking_metrics_from_report(dice_result.metrics),
+                    "mean_abl": (
+                        sum(abl_values) / len(abl_values) if abl_values else None
+                    ),
+                }
+            )
+    return result

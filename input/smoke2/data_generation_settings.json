@@ -3,12 +3,11 @@
   [
     {
       "kbs": "semantic_bible",
-      "num_rand_samples": 300,
-      "depth": 1,
-      "max_child_len": 6,
-      "refinement_expressivity": 0.4,
-      "rho": "ALC",
-      "min_num_pos_examples": 1
+      "num_rand_samples": 1500,
+      "depth": 10,
+      "max_child_len": 25,
+      "beyond_alc": false,
+      "refinement_expressivity": 0.9
     }
   ]
 }

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -86,6 +86,23 @@ def parse_triples(kb_path: Path) -> list[Triple]:
 def individual_iris(knowledge_base: KnowledgeBase) -> list[str]:
     """Return every named-individual IRI in the knowledge base, sorted."""
     return sorted(individual.str for individual in knowledge_base.individuals())
+
+
+def local_name_collisions(iris: Iterable[str]) -> dict[str, list[str]]:
+    """Group distinct IRIs that share a local name.
+
+    Per methodology sec:meth:kbs, colliding IRIs are dropped rather than
+    silently merged, and the collision count is reported per knowledge base.
+    Only names shared by more than one distinct IRI are returned.
+    """
+    groups: dict[str, set[str]] = {}
+    for iri in iris:
+        groups.setdefault(local_name(iri), set()).add(iri)
+    return {
+        name: sorted(members)
+        for name, members in groups.items()
+        if len(members) > 1
+    }
 
 
 def iter_atomic_concepts(knowledge_base: KnowledgeBase) -> Iterator[str]:

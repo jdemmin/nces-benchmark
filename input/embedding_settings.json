@@ -1,6 +1,6 @@
 {
   "model_name": "Keci",
-  "embedding_dim": 64,
+  "embedding_dim": 128,
   "epochs": 150,
   "batch_size": 64,
   "learning_rate": 0.1,
@@ -9,15 +9,14 @@
   "eval_model": "train_val_test",
   "num_core": 0,
   "hpo_backend": "smac",
-  "n_trials": 64,
+  "n_trials": 32,
   "trial_walltime_limit": 20000,
   "n_workers": 1,
   "search_space": {
-    "embedding_dim_choices": [32, 64, 128, 256],
     "batch_size_choices": [32, 64, 128, 256, 512],
     "learning_rate_bounds": [0.001, 0.3],
-    "epochs_bounds": [25, 150],
+    "epochs_bounds": [25, 100],
     "tune_epochs": true,
-    "tune_scoring_technique": true
+    "tune_scoring_technique": false
   }
 }

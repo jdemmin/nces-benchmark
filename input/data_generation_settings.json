@@ -1,0 +1,37 @@
+{
+  "data_generation_settings":
+  [
+    {
+      "kbs": "semantic_bible",
+      "num_rand_samples": 1500,
+      "depth": 10,
+      "max_child_len": 25,
+      "beyond_alc": false,
+      "refinement_expressivity": 0.9
+    },
+    {
+      "kbs": "vicodi",
+      "num_rand_samples": 1500,
+      "depth": 10,
+      "max_child_len": 25,
+      "beyond_alc": false,
+      "refinement_expressivity": 0.5
+    },
+    {
+      "kbs": "carcinogenesis",
+      "num_rand_samples": 1500,
+      "depth": 10,
+      "max_child_len": 25,
+      "beyond_alc": false,
+      "refinement_expressivity": 0.6
+    },
+    {
+      "kbs": "mutagenesis",
+      "num_rand_samples": 1500,
+      "depth": 10,
+      "max_child_len": 25,
+      "beyond_alc": false,
+      "refinement_expressivity": 0.8
+    }
+  ]
+}

@@ -64,9 +64,9 @@ def build_configuration_space(
 ) -> ConfigurationSpace:
     """Build the ConfigSpace for the DICE embedding search.
 
-    ``embedding_dim`` and ``batch_size`` are ordinal categoricals rather
-    than uniform integers: DICE's multi-component models require the
-    dimension to stay a multiple of the component count, and powers of two
+    ``embedding_dim`` is fixed at 128 for every condition and is not part of
+    the space (methodology sec:meth:dimensionality). ``batch_size`` is an
+    ordinal categorical rather than a uniform integer because powers of two
     keep the exported CSV width predictable for NCES.
     """
     from ConfigSpace import (
@@ -80,14 +80,6 @@ def build_configuration_space(
     cs = ConfigurationSpace(seed=seed)
 
     hyperparameters: list[Any] = [
-        Categorical(
-            "embedding_dim",
-            list(space.embedding_dim_choices),
-            default=_nearest_choice(
-                settings.embedding_dim, space.embedding_dim_choices
-            ),
-            ordered=True,
-        ),
         Categorical(
             "batch_size",
             list(space.batch_size_choices),
@@ -150,7 +142,6 @@ def settings_from_configuration(
     overrides: dict[str, Any] = {}
     values = dict(config)
     for name in (
-        "embedding_dim",
         "batch_size",
         "epochs",
         "learning_rate",
@@ -158,8 +149,6 @@ def settings_from_configuration(
     ):
         if name in values:
             overrides[name] = values[name]
-    if "embedding_dim" in overrides:
-        overrides["embedding_dim"] = int(overrides["embedding_dim"])
     if "batch_size" in overrides:
         overrides["batch_size"] = int(overrides["batch_size"])
     if "epochs" in overrides:

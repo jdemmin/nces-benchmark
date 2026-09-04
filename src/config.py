@@ -40,8 +40,9 @@ NCES_LEARNERS: tuple[str, ...] = ("LSTM", "GRU", "SetTransformer")
 #: Train / validation / test proportions for the RDF triple split.
 SPLIT_RATIOS: tuple[float, float, float] = (0.8, 0.1, 0.1)
 
-#: Embedding conditions compared by the benchmark.
-EMBEDDING_CONDITIONS: tuple[str, ...] = ("dice", "random")
+#: Embedding conditions compared by the benchmark: the twelve DICE
+#: architectures plus the "random" control, the reference level.
+EMBEDDING_CONDITIONS: tuple[str, ...] = (*DICE_MODELS, "random")
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -187,18 +188,16 @@ HPO_BACKENDS: tuple[str, ...] = ("smac", "grid")
 class EmbeddingSearchSpace:
     """Bounds for the SMAC configuration space of the DICE search.
 
-    Only hyperparameters that DICE actually consumes are exposed. The
-    dimension is sampled on a log2 grid because multi-component models
-    (Keci, ComplEx, QMult, ...) require the stored width to stay a clean
-    multiple of the component count.
+    ``embedding_dim`` is deliberately not a field here: it is fixed at 128
+    for every condition and excluded from the search space so that no
+    architecture is advantaged by capacity (methodology sec:meth:dimensionality).
     """
 
-    embedding_dim_choices: tuple[int, ...] = (32, 64, 128, 256)
-    batch_size_choices: tuple[int, ...] = (32, 64, 128, 256)
+    batch_size_choices: tuple[int, ...] = (32, 64, 128, 256, 512)
     learning_rate_bounds: tuple[float, float] = (1e-3, 3e-1)
     epochs_bounds: tuple[int, int] = (25, 100)
     scoring_technique_choices: tuple[str, ...] = ("KvsAll", "NegSample", "AllvsAll", "1vsAll")
-    tune_epochs: bool = False
+    tune_epochs: bool = True
     tune_scoring_technique: bool = False
 
     @classmethod
@@ -208,12 +207,6 @@ class EmbeddingSearchSpace:
             raise TypeError("embedding_settings.search_space must be an object.")
         defaults = cls()
         return cls(
-            embedding_dim_choices=tuple(
-                int(v)
-                for v in space.get(
-                    "embedding_dim_choices", defaults.embedding_dim_choices
-                )
-            ),
             batch_size_choices=tuple(
                 int(v)
                 for v in space.get(
@@ -249,8 +242,8 @@ class EmbeddingSettings:
     """DICE embedding settings (``embedding_settings.json``)."""
 
     model_name: str = "Keci"
-    embedding_dim: int = 64
-    epochs: int = 50
+    embedding_dim: int = 128
+    epochs: int = 150
     batch_size: int = 64
     scoring_technique: str = "KvsAll"
     trainer: str = "torchCPUTrainer"
@@ -260,7 +253,7 @@ class EmbeddingSettings:
 
     # --- hyperparameter search ------------------------------------------
     hpo_backend: str = "smac"
-    n_trials: int = 16
+    n_trials: int = 32
     walltime_limit: float | None = None
     trial_walltime_limit: float | None = None
     n_workers: int = 1
@@ -283,18 +276,14 @@ class EmbeddingSettings:
             raise ValueError(f"n_trials must be >= 1, got {self.n_trials}.")
 
     def search_grid(self) -> list[EmbeddingSettings]:
-        """Legacy grid: base/doubled dimension x base/halved batch.
+        """Legacy grid: base/halved batch, at the fixed embedding dimension.
 
         Kept as the ``hpo_backend="grid"`` fallback so a run can be
-        reproduced without SMAC installed.
+        reproduced without SMAC installed. ``embedding_dim`` is never
+        varied: it is fixed for every condition.
         """
-        dims = sorted({self.embedding_dim, self.embedding_dim * 2})
         batches = sorted({self.batch_size, max(1, self.batch_size // 2)})
-        return [
-            replace(self, embedding_dim=dim, batch_size=batch)
-            for dim in dims
-            for batch in batches
-        ]
+        return [replace(self, batch_size=batch) for batch in batches]
 
     def with_overrides(self, **overrides: Any) -> EmbeddingSettings:
         """Return a copy with the SMAC-sampled values applied."""
@@ -314,8 +303,8 @@ class EmbeddingSettings:
         trial_walltime = payload.get("trial_walltime_limit")
         return cls(
             model_name=str(payload.get("model_name", "Keci")),
-            embedding_dim=int(payload.get("embedding_dim", 64)),
-            epochs=int(payload.get("epochs", 50)),
+            embedding_dim=int(payload.get("embedding_dim", 128)),
+            epochs=int(payload.get("epochs", 150)),
             batch_size=int(payload.get("batch_size", 64)),
             scoring_technique=str(payload.get("scoring_technique", "KvsAll")),
             trainer=str(payload.get("trainer", "torchCPUTrainer")),
@@ -323,7 +312,7 @@ class EmbeddingSettings:
             num_core=int(payload.get("num_core", 0)),
             learning_rate=float(payload.get("learning_rate", 0.1)),
             hpo_backend=str(payload.get("hpo_backend", "smac")),
-            n_trials=int(payload.get("n_trials", 16)),
+            n_trials=int(payload.get("n_trials", 32)),
             walltime_limit=None if walltime is None else float(walltime),
             trial_walltime_limit=(
                 None if trial_walltime is None else float(trial_walltime)
@@ -338,8 +327,8 @@ class EmbeddingSettings:
         trial_walltime = data.get("trial_walltime_limit")
         return cls(
             model_name=str(data.get("model_name", "Keci")),
-            embedding_dim=int(data.get("embedding_dim", 64)),
-            epochs=int(data.get("epochs", 50)),
+            embedding_dim=int(data.get("embedding_dim", 128)),
+            epochs=int(data.get("epochs", 150)),
             batch_size=int(data.get("batch_size", 64)),
             scoring_technique=str(data.get("scoring_technique", "KvsAll")),
             trainer=str(data.get("trainer", "torchCPUTrainer")),
@@ -347,7 +336,7 @@ class EmbeddingSettings:
             num_core=int(data.get("num_core", 0)),
             learning_rate=float(data.get("learning_rate", 0.1)),
             hpo_backend=str(data.get("hpo_backend", "smac")),
-            n_trials=int(data.get("n_trials", 16)),
+            n_trials=int(data.get("n_trials", 32)),
             walltime_limit=None if walltime is None else float(walltime),
             trial_walltime_limit=(
                 None if trial_walltime is None else float(trial_walltime)

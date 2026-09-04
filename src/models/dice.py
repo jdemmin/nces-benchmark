@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -21,14 +21,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EmbeddingResultDice:
-    """
-    Outcome of one DICE embedding-training workflow.
-    Note, this class is ``NOT`` to be confused with
-    EmbeddingResult, which is a more general class
-    that represents the mean result of a single
-    embedding evaluated by NCES across multiple
-    learning problems.
-    """
+    """Outcome of one DICE architecture's embedding-training workflow."""
 
     embedding_settings: EmbeddingSettings
     score: float | None = None
@@ -325,7 +318,10 @@ class BestReport:
 @dataclass(frozen=True)
 class BuildEmbeddingResult:
     results: dict[str, EmbeddingResultDice]
-    model_csv_dim: int
+    #: Exported CSV width per condition. Architectures can store several
+    #: components per configured dimension, so this is measured, not
+    #: assumed; ``random`` is always exactly ``nces_embedding_dim``.
+    model_csv_dim: dict[str, int]
 
 
 def build_embeddings(
@@ -337,56 +333,57 @@ def build_embeddings(
     nces_embedding_dim: int,
     triples: list[Triple],
     counts: dict[str, int],
+    conditions: Sequence[str],
 ) -> BuildEmbeddingResult:
     """Run the full embedding stage for every requested condition.
 
-    The ``dice`` condition trains the hyperparameter grid and exports the best
-    trial's entity embeddings. The ``random`` condition reuses the entity
-    vocabulary and the selected dimensionality but never trains.
+    Every KGE condition is one DICE architecture: it gets its own
+    hyperparameter search and its own subdirectory under ``embeddings_dir``
+    so trial artifacts never collide between architectures. ``random`` is
+    the single i.i.d. uniform control shared across every comparison; it
+    reuses the entity vocabulary and the fixed NCES dimensionality but never
+    trains.
     """
-    
+
     entity_names = sorted(
         {triple.subject for triple in triples} | {triple.object for triple in triples}
     )
     results: dict[str, EmbeddingResultDice] = {}
-    chosen = embedding_settings
-    results["dice"] = _build_dice_embedding_result(
-        embeddings_dir,
-        data_dir,
-        chosen,
-        seed=seed,
-        entity_names=entity_names,
-    )
-    # Match the exported DICE width, not the configured dimension: some
-    # models store several components per dimension.
-    csv_dim = get_csv_dimension(embeddings_dir / f"{chosen.model_name}.csv")
-    seed_everything(seed) 
-    # random_embedding_output_path =embeddings_dir / f"{chosen.model_name}_random.csv"
-    # generate_random_embeddings(
-    #     entity_names=entity_names,
-    #     output_path=random_embedding_output_path,
-    #     embedding_dim=csv_dim,
-    #     seed=seed,
-    # )
-    # results["random"] = EmbeddingResultDice(
-    #     embedding_settings=chosen,
-    #     embeddings_path=random_embedding_output_path,
-    # )
-    generate_shuffle_embeddings(
-        input_path=embeddings_dir / f"{chosen.model_name}.csv",
-        output_path=embeddings_dir / f"{chosen.model_name}_shuffle.csv",
-        embedding_dim=csv_dim,
-        seed=seed,
-    )
-    results["shuffle"] = EmbeddingResultDice(
-        embedding_settings=chosen,
-        embeddings_path=embeddings_dir / f"{chosen.model_name}_shuffle.csv",
-    )
-    logger.info(
-        "Random embedding baseline completed: %d entities, dim=%d",
-        len(entity_names),
-        nces_embedding_dim,
-    )
+    csv_dims: dict[str, int] = {}
+
+    for condition in conditions:
+        if condition == "random":
+            continue
+        condition_dir = embeddings_dir / condition
+        results[condition] = _build_dice_embedding_result(
+            condition_dir,
+            data_dir,
+            replace(embedding_settings, model_name=condition),
+            seed=seed,
+            entity_names=entity_names,
+        )
+        csv_dims[condition] = get_csv_dimension(condition_dir / f"{condition}.csv")
+
+    if "random" in conditions:
+        seed_everything(seed)
+        random_output_path = embeddings_dir / "random" / "random.csv"
+        generate_random_embeddings(
+            entity_names=entity_names,
+            output_path=random_output_path,
+            embedding_dim=nces_embedding_dim,
+            seed=seed,
+        )
+        results["random"] = EmbeddingResultDice(
+            embedding_settings=embedding_settings,
+            embeddings_path=random_output_path,
+        )
+        csv_dims["random"] = nces_embedding_dim
+        logger.info(
+            "Random embedding control completed: %d entities, dim=%d",
+            len(entity_names),
+            nces_embedding_dim,
+        )
+
     write_json(
         {
             "triple_counts": counts,
@@ -399,7 +396,7 @@ def build_embeddings(
     )
     return BuildEmbeddingResult(
         results=results,
-        model_csv_dim=csv_dim,
+        model_csv_dim=csv_dims,
     )
 
 
@@ -503,20 +500,3 @@ def get_csv_dimension(embeddings_path: Path) -> int:
         )
         raise FileNotFoundError(f"Embeddings CSV {embeddings_path} is empty.")
     return frame.shape[1]
-
-def generate_shuffle_embeddings(
-    input_path: Path,
-    output_path: Path,
-    embedding_dim: int,
-    seed: int,
-) -> None:
-    """Generate a CSV file with shuffled embeddings for the entities in the input CSV."""
-    import numpy as np
-    import pandas as pd
-
-    frame = pd.read_csv(input_path, index_col=0)
-    entity_names = frame.index.tolist()
-    rng = np.random.default_rng(seed)
-    embeddings = rng.standard_normal((len(entity_names), embedding_dim))
-    shuffled_frame = pd.DataFrame(embeddings, index=entity_names)
-    shuffled_frame.to_csv(output_path)

@@ -1,0 +1,6 @@
+{
+  "seeds": [1, 2, 3, 4, 5],
+  "benchmark_name": "benchmark",
+  "embedding_conditions": ["Decal", "Keci", "DualE", "ComplEx", "QMult", "OMult", "ConvQ", "ConvO", "ConEx", "TransE", "DistMult", "Shallom", "random"],
+  "stratify_by": "depth"
+}
