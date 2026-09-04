@@ -122,12 +122,16 @@ def extension_size_summary(design: PairedDesign) -> ExtensionSizeSummary:
     
 
     def valid_mask(column: str):
-        return target_valid & per_problem[column].notna()
+        return (
+            target.gt(0)
+            & target.notna()
+            & per_problem[column].notna()
+    )
 
     def ratio_of_means(column: str) -> float | None:
         valid = valid_mask(column)
         subset = per_problem.loc[valid, column]
-        denominator = target[valid].mean()
+        denominator = target.loc[valid].mean()
         if not len(subset) or not denominator:
             return None
         return float(subset.mean() / denominator)
