@@ -216,14 +216,6 @@ def test_extension_summary_negative_target_treated_as_invalid():
     assert summary.n_with_target_size == 2
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Bug: NaN hypothesis sizes are skipped by ratio_of_means "
-        "(pandas mean) but not excluded from mean_of_ratios, so the two "
-        "families silently cover different problem sets."
-    ),
-    strict=True,
-)
 def test_extension_summary_families_cover_same_problems_under_nan():
     frame = make_frame(n_problems=4)
     frame.loc[
