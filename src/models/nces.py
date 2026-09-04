@@ -421,6 +421,7 @@ def _score_problems(
                 expressivity=problem.complexity.expressivity,
                 extension_ratio=hardness.extension_ratio,
                 atomic_baseline_f1=hardness.atomic_baseline_f1,
+                target_extension_size=metrics.target_extension_size,
                 values={
                     "abl": metrics.abl,
                     "abl_norm": metrics.abl_norm,
