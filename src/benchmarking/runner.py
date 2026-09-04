@@ -185,8 +185,9 @@ def run_benchmark(
         }
         out=output_dir or OUTPUT_DIR
         write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
+        _clean_dir(path=benchmark_dir, make_zip=True)
         _copy_from_temp_dir(from_path=benchmark_dir, to_path=out)
-        _clean_dir(path=out, make_zip=True)
+        
         
     return summary
 
