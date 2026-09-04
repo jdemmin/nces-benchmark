@@ -52,13 +52,13 @@ class MeanMetricsResult:
     semantic_equivalence_rate: SingleMetric
     intersection: SingleMetric
     union: SingleMetric
-    lift: SingleMetric | None
+    atomic_baseline_lift: SingleMetric | None
     lp_count: int
 
     @classmethod
     def from_dict(cls, data: dict) -> "MeanMetricsResult":
-        lift_mean_data = data.get("lift")
-        lift_mean_data = float(lift_mean_data) if lift_mean_data is not None else None
+        atomic_baseline_lift_mean_data = data.get("atomic_baseline_lift")
+        atomic_baseline_lift_mean_data = float(atomic_baseline_lift_mean_data) if atomic_baseline_lift_mean_data is not None else None
         return cls(
             accuracy=cls._get_single_metric("accuracy", data),
             precision=cls._get_single_metric("precision", data),
@@ -68,18 +68,18 @@ class MeanMetricsResult:
             semantic_equivalence_rate=cls._get_single_metric("semantic_equivalence_rate", data),
             intersection=cls._get_single_metric("intersection", data),
             union=cls._get_single_metric("union", data),
-            lift=cls._get_single_metric("lift", data) if lift_mean_data is not None else None,
+            atomic_baseline_lift=cls._get_single_metric("atomic_baseline_lift", data) if atomic_baseline_lift_mean_data is not None else None,
             lp_count=data.get("lp_count", 0)
         )
 
     @classmethod
     def _get_single_metric(cls, key: str, data: dict) -> SingleMetric:
+        payload = data.get(key, {})
         return SingleMetric(
                 identifier=key,
-                mean=data.get("mean", 0.0),
-                variance=data.get("variance", 0.0),
-                std_dev=data.get("std_dev", 0.0),
-                # n=data.get("n", 0)
+                mean=payload.get("mean", 0.0),
+                variance=payload.get("variance", 0.0),
+                std_dev=payload.get("std_dev", 0.0),
         )
 
     
@@ -93,7 +93,7 @@ class MeanMetricsResult:
             "semantic_equivalence_rate": self.semantic_equivalence_rate.to_dict(),
             "intersection": self.intersection.to_dict(),
             "union": self.union.to_dict(),
-            "lift": self.lift.to_dict() if self.lift is not None else None,
+            "atomic_baseline_lift": self.atomic_baseline_lift.to_dict() if self.atomic_baseline_lift is not None else None,
             "lp_count": self.lp_count
         }
 
@@ -112,7 +112,7 @@ class MetricsResult:
     semantic_equivalence: bool
     intersection: int
     union: int
-    lift: float
+    atomic_baseline_lift: float
 
 
     @classmethod
@@ -126,7 +126,7 @@ class MetricsResult:
             semantic_equivalence=data.get("semantic_equivalence", False),
             intersection=data.get("intersection", 0),
             union=data.get("union", 0),
-            lift=data.get("lift", 0)
+            atomic_baseline_lift=data.get("atomic_baseline_lift", 0)
         )
 
     
@@ -140,7 +140,7 @@ class MetricsResult:
             "semantic_equivalence": self.semantic_equivalence,
             "intersection": self.intersection,
             "union": self.union,
-            "lift": self.lift
+            "atomic_baseline_lift": self.atomic_baseline_lift
         }
 
     def to_mean_metrics(self) -> MeanMetricsResult:
@@ -154,7 +154,7 @@ class MetricsResult:
             semantic_equivalence_rate=self._get_single_metric("semantic_equivalence"),
             intersection=self._get_single_metric("intersection"),
             union=self._get_single_metric("union"),
-            lift=self._get_single_metric("lift"),
+            atomic_baseline_lift=self._get_single_metric("atomic_baseline_lift"),
             lp_count=1,
         )
 
