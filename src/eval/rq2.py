@@ -18,9 +18,16 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from src.eval.pairing import dataframe_records
+
 logger = logging.getLogger(__name__)
 
 TUNED = ("batch_size", "learning_rate", "epochs")
+
+
+def _native_scalar(value: Any) -> Any:
+    """Unbox a numpy scalar (e.g. from a pandas Series) to a native Python type."""
+    return value.item() if hasattr(value, "item") else value
 
 
 @dataclass(frozen=True)
@@ -180,7 +187,7 @@ def selection_stability(trials: pd.DataFrame) -> list[SelectionStability]:
                     else None
                 ),
                 per_parameter_spread=spreads,
-                selected=best.to_dict(orient="records"),
+                selected=dataframe_records(best),
             )
         )
     return results
@@ -293,8 +300,10 @@ def substudy_configurations(
         return []
 
     def configuration(row: pd.Series, label: str) -> dict[str, Any]:
+        # A Series is numpy-backed; unbox each cell to a native Python
+        # scalar so the payload can be handed straight to ``json.dump``.
         payload = {
-            parameter: row[parameter] for parameter in TUNED
+            parameter: _native_scalar(row[parameter]) for parameter in TUNED
         }
         payload["label"] = label
         payload["source_score"] = float(row["score"])

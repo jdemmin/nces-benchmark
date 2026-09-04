@@ -24,10 +24,23 @@ from src.eval.pairing import (
     PairedDesign,
     PairedDesignImpossible,
     assemble,
+    dataframe_records,
     primary_outcome,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _json_fallback(obj: Any) -> Any:
+    """Last-resort numpy-scalar unboxing for ``json.dump``.
+
+    ``dataframe_records`` already converts every DataFrame-derived section;
+    this only guards against a stray numpy scalar reaching ``json.dump``
+    some other way.
+    """
+    if hasattr(obj, "item"):
+        return obj.item()
+    return str(obj)
 
 
 @dataclass
@@ -62,7 +75,13 @@ class SuiteAnalysis:
     def write(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as handle:
-            json.dump(self.to_dict(), handle, indent=2, ensure_ascii=False)
+            json.dump(
+                self.to_dict(),
+                handle,
+                indent=2,
+                ensure_ascii=False,
+                default=_json_fallback,
+            )
         logger.info("Wrote suite analysis to %s", path)
 
 
@@ -131,7 +150,7 @@ def analyse_suite(
                     ),
                 )
                 if frame is not None and not frame.empty:
-                    cells[by] = frame.to_dict(orient="records")
+                    cells[by] = dataframe_records(frame)
             if cells:
                 analysis.breakdowns[key] = cells
 
@@ -167,7 +186,7 @@ def analyse_suite(
         "sign_agreement", lambda: rq1.sign_agreement(analysis.contrasts)
     )
     if agreement is not None and not agreement.empty:
-        analysis.sign_agreement = agreement.to_dict(orient="records")
+        analysis.sign_agreement = dataframe_records(agreement)
 
     if quality is not None and not quality.empty:
         link = ledger.guard("mrr_against_abl", lambda: rq1.link_summary(quality))
@@ -197,7 +216,7 @@ def analyse_suite(
         )
         analysis.hyperparameters = {
             "marginal_relationships": (
-                marginals.to_dict(orient="records")
+                dataframe_records(marginals)
                 if marginals is not None and not marginals.empty
                 else []
             ),

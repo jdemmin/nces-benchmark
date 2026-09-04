@@ -10,6 +10,10 @@ class ToDictJSONEncoder(json.JSONEncoder):
     def default(self, obj: Any) -> Any:
         if hasattr(obj, "to_dict") and callable(obj.to_dict):
             return obj.to_dict()
+        # numpy scalars (e.g. leaked from a DataFrame) unbox to native
+        # Python types instead of being silently stringified.
+        if hasattr(obj, "item"):
+            return obj.item()
 
         return str(obj)
 
