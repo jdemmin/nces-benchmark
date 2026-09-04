@@ -9,6 +9,7 @@ conditions produced a usable value.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -20,6 +21,19 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 CONTROL = "random"
+
+
+def dataframe_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """Convert a DataFrame to JSON-safe records with native Python types.
+
+    ``DataFrame.to_dict(orient="records")`` leaks numpy scalar dtypes (e.g.
+    ``numpy.int64``), which the standard library's ``json`` module cannot
+    serialize. Round-tripping through pandas' own JSON encoder first
+    guarantees native Python ``int``/``float``/``bool``/``None``.
+    """
+    if frame.empty:
+        return []
+    return json.loads(frame.to_json(orient="records"))
 
 #: Outcomes carried through the paired design. ``abl`` is primary.
 OUTCOMES = (
@@ -59,6 +73,7 @@ class Observation:
     expressivity: str | None
     extension_ratio: float | None
     atomic_baseline_f1: float | None
+    target_extension_size: int | None
     values: Mapping[str, float | None]
 
 
@@ -136,6 +151,7 @@ def observations_to_frame(observations: Iterable[Observation]) -> pd.DataFrame:
             "expressivity": obs.expressivity,
             "extension_ratio": obs.extension_ratio,
             "atomic_baseline_f1": obs.atomic_baseline_f1,
+            "target_extension_size": obs.target_extension_size,
         }
         for outcome in OUTCOMES:
             row[outcome] = obs.values.get(outcome)
@@ -180,6 +196,7 @@ def assemble(
         "expressivity",
         "extension_ratio",
         "atomic_baseline_f1",
+        "target_extension_size",
     ]
     left = treated[treated["seed"].isin(shared_seeds)]
     right = control[control["seed"].isin(shared_seeds)]
