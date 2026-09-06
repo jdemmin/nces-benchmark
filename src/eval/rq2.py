@@ -165,10 +165,13 @@ def selection_stability(trials: pd.DataFrame) -> list[SelectionStability]:
         ["condition", "knowledge_base"]
     ):
         best = group.loc[group.groupby("seed")["score"].idxmax()]
-        signatures = {
-            tuple(row[parameter] for parameter in TUNED)
-            for _, row in best.iterrows()
-        }
+        signatures = set(
+            best[list(TUNED)]
+            .round({"learning_rate": 12})
+            .astype(object)
+            .where(best[list(TUNED)].notna(), None)
+            .itertuples(index=False, name=None)
+        )
         spreads: dict[str, float | None] = {}
         for parameter in TUNED:
             values = best[parameter].dropna().astype(float)
@@ -248,10 +251,11 @@ def select_substudy_target(
     scoped = usable[usable["knowledge_base"] == kb]
     if scoped.empty:
         return None
-    spreads = scoped.groupby("condition")["score"].agg(
-        lambda s: float(s.max() - s.min())
-    )
-    condition = spreads.idxmax()
+    spreads = scoped.groupby("condition")["score"].std(ddof=1)
+    spreads = spreads.dropna()
+    if spreads.empty:
+        return None
+    condition = spreads.idxmax(skipna=True)
 
     effect_row = effects[
         (effects["knowledge_base"] == kb)
@@ -280,6 +284,7 @@ def substudy_configurations(
     knowledge_base: str,
     condition: str,
     extreme_learning_rate: float = 0.3,
+    scoped_guard: int = 0
 ) -> list[dict[str, Any]]:
     """Draw the four sub-study configurations from the trial record.
 
@@ -297,6 +302,18 @@ def substudy_configurations(
         .reset_index(drop=True)
     )
     if scoped.empty:
+        logger.warning(
+            "No successful trials found for knowledge_base=%s and condition=%s",
+            knowledge_base,
+            condition,
+        )
+        return []
+    if len(scoped) < scoped_guard:
+        logger.warning(
+            "Not enough successful trials to draw all sub-study configurations for knowledge_base=%s and condition=%s",
+            knowledge_base,
+            condition,
+        )
         return []
 
     def configuration(row: pd.Series, label: str) -> dict[str, Any]:
