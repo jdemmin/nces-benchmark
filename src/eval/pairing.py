@@ -198,8 +198,8 @@ def assemble(
         "atomic_baseline_f1",
         "target_extension_size",
     ]
-    left = treated[treated["seed"].isin(shared_seeds)]
-    right = control[control["seed"].isin(shared_seeds)]
+    left = treated[treated["seed"].isin(shared_seeds)].drop_duplicates()
+    right = control[control["seed"].isin(shared_seeds)].drop_duplicates()
 
     merged = left.merge(
         right[[*keys, "hypothesis", *OUTCOMES]],
@@ -209,8 +209,8 @@ def assemble(
     )
 
     unpaired = sorted(
-        (set(left["problem_id"]) | set(right["problem_id"]))
-        - set(merged["problem_id"])
+        (set(left[["seed", "problem_id"]].itertuples(index=False, name=None)) | set(right[["seed", "problem_id"]].itertuples(index=False, name=None)))
+        - set(merged[["seed", "problem_id"]].itertuples(index=False, name=None))
     )
 
     columns: dict[str, Any] = {
@@ -233,11 +233,13 @@ def assemble(
         knowledge_base=knowledge_base,
         frame=pd.DataFrame(columns),
         seeds=tuple(shared_seeds),
-        unpaired_problem_ids=tuple(unpaired),
+        unpaired_problem_ids=tuple(problem_id for _, problem_id in unpaired),
         failures=dict(failures or {}),
     )
 
-    if not design.frame[f"d_{PRIMARY_OUTCOME}"].notna().any():
+    if design.frame.empty:
+        design.notes.append("No paired observations available; design is empty.")
+    elif not design.frame[f"d_{PRIMARY_OUTCOME}"].notna().any():
         design.substituted_primary = True
         design.notes.append(
             f"{PRIMARY_OUTCOME!r} unavailable (missing hardness annotation); "
@@ -252,7 +254,12 @@ def assemble(
 
 def primary_outcome(design: PairedDesign) -> str:
     """The outcome the estimates are reported on, after any substitution."""
-    return FALLBACK_OUTCOME if design.substituted_primary else PRIMARY_OUTCOME
+    if design.substituted_primary and FALLBACK_OUTCOME in design.available_outcomes():
+        return FALLBACK_OUTCOME
+    elif not design.substituted_primary:
+        return PRIMARY_OUTCOME
+    else:
+        raise ValueError("No valid primary outcome available.")
 
 
 def resample_seed_clusters(
