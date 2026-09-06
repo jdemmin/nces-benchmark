@@ -80,7 +80,16 @@ def trials_to_frame(trials: Sequence[Trial]) -> pd.DataFrame:
 def marginal_relationships(trials: pd.DataFrame) -> pd.DataFrame:
     """Spearman's rho between each tuned hyperparameter and validation MRR."""
     if trials.empty:
-        return pd.DataFrame(columns=["condition", "knowledge_base", "parameter", "rho", "p_value", "n_trials"])
+        return pd.DataFrame(
+            columns=[
+                "condition", 
+                "knowledge_base", 
+                "parameter", 
+                "rho", 
+                "p_value", 
+                "n_trials"
+            ]
+        )
     usable = trials[~trials["failed"]].dropna(subset=["score"])
     rows: list[dict[str, Any]] = []
     grouped = usable.groupby(["condition", "knowledge_base"])
@@ -112,7 +121,11 @@ def marginal_relationships(trials: pd.DataFrame) -> pd.DataFrame:
                     "n_trials": len(values),
                 }
             )
-    return pd.DataFrame(rows)
+    # Convert the collected rows into a DataFrame and ensure proper handling of NaN values.
+    result = pd.DataFrame(rows)
+    for col in ("rho", "p_value"):
+        result[col] = result[col].astype(object).where(result[col].notna(), None)
+    return result
 
 
 @dataclass(frozen=True)
