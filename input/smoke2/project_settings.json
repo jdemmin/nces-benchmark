@@ -1,6 +1,6 @@
 {
   "seeds": [1, 2],
   "benchmark_name": "smoke2",
-  "embedding_conditions": ["Keci", "Shallom", "random"],
+  "embedding_conditions": ["random"],
   "stratify_by": "depth"
 }
