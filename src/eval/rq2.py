@@ -211,7 +211,7 @@ class SubStudySelection:
     condition: str
     criterion: str
     observed_mrr_spread: float
-    observed_main_effect: float
+    observed_main_effect: float | None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -233,13 +233,16 @@ def select_substudy_target(
     ``estimate``.
     """
     if trials.empty or main_effects.empty:
+        logger.warning("Empty trials or main effects; cannot select substudy target.")
         return None
     usable = trials[~trials["failed"]].dropna(subset=["score"])
     if usable.empty:
+        logger.warning("No usable trials found; cannot select substudy target.")
         return None
 
     effects = main_effects.dropna(subset=["estimate"])
     if effects.empty:
+        logger.warning("No main effects available; cannot select substudy target.")
         return None
     kb = (
         effects.assign(magnitude=effects["estimate"].abs())
@@ -250,10 +253,12 @@ def select_substudy_target(
 
     scoped = usable[usable["knowledge_base"] == kb]
     if scoped.empty:
+        logger.warning("No trials found for selected knowledge_base=%s; cannot select substudy target.", kb)
         return None
     spreads = scoped.groupby("condition")["score"].std(ddof=1)
     spreads = spreads.dropna()
     if spreads.empty:
+        logger.warning("No score spreads found for selected knowledge_base=%s; cannot select substudy target.", kb)
         return None
     condition = spreads.idxmax(skipna=True)
 
@@ -261,6 +266,12 @@ def select_substudy_target(
         (effects["knowledge_base"] == kb)
         & (effects["condition"] == condition)
     ]
+    if effect_row.empty:
+        logger.warning(
+            "No main effect found for knowledge_base=%s and condition=%s",
+            kb,
+            condition,
+        )
     return SubStudySelection(
         knowledge_base=str(kb),
         condition=str(condition),
@@ -273,7 +284,7 @@ def select_substudy_target(
         observed_main_effect=(
             float(effect_row["estimate"].iloc[0])
             if len(effect_row)
-            else float("nan")
+            else None
         ),
     )
 
