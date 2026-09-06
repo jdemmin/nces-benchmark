@@ -183,7 +183,11 @@ def cluster_bootstrap_interval(
     bound.
     """
     column = f"d_{outcome}"
-    usable = design.frame.dropna(subset=[column])
+    try:
+        usable = design.frame.dropna(subset=[column])
+    except KeyError:
+        logger.warning("Column %s not found in design frame", column)
+        return None
     if usable.empty or len(design.seeds) < 2:
         return None
 
