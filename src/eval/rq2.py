@@ -331,9 +331,19 @@ def substudy_configurations(
         configuration(scoped.iloc[0], "worst_mrr"),
         configuration(scoped.iloc[len(scoped) // 2], "median_mrr"),
     ]
+    extreme_learning_rate_is_best_learning_rate = extreme_learning_rate == picks[0].get("learning_rate")
     extreme = dict(picks[0])
     extreme["label"] = "extreme_learning_rate"
-    extreme["learning_rate"] = extreme_learning_rate
     extreme["source_score"] = None
+    if extreme_learning_rate_is_best_learning_rate:
+        logger.info(
+            "Extreme learning rate configuration for knowledge_base=%s and condition=%s "
+                "will be used",
+            knowledge_base,
+            condition,
+        )    
+        extreme["learning_rate"] = None
+    else:
+        extreme["learning_rate"] = extreme_learning_rate
     picks.append(extreme)
     return picks
