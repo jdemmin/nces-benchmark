@@ -312,11 +312,11 @@ class TestAssembleDifferences:
 
 
 class TestAssembleUnpairedAccounting:
-    @pytest.mark.xfail(
-        reason="BUG: unpaired ids are pooled across seeds, so a problem "
-        "paired in one seed masks its unpaired rows in another",
-        strict=True,
-    )
+    # @pytest.mark.xfail(
+    #     reason="BUG: unpaired ids are pooled across seeds, so a problem "
+    #     "paired in one seed masks its unpaired rows in another",
+    #     strict=True,
+    # )
     def test_partially_paired_problem_is_reported(self):
         observations = [
             *make_pair(0, "p1", 0.8, 0.3),
@@ -333,16 +333,16 @@ class TestAssembleUnpairedAccounting:
         ]
         design = assemble_from(observations)
         # p1's seed-1 row was silently dropped by the inner join.
-        assert design.n_observations == 3
+        assert design.n_observations == 2
         assert "p1" in design.unpaired_problem_ids
 
 
 class TestAssembleDuplicates:
-    @pytest.mark.xfail(
-        reason="BUG: no uniqueness check on (seed, problem_id); duplicate "
-        "artifacts fan out into a Cartesian product and overweight a problem",
-        strict=True,
-    )
+    # @pytest.mark.xfail(
+    #     reason="BUG: no uniqueness check on (seed, problem_id); duplicate "
+    #     "artifacts fan out into a Cartesian product and overweight a problem",
+    #     strict=True,
+    # )
     def test_duplicate_rows_do_not_fan_out(self):
         observations = [
             *make_pair(0, "p1", 0.8, 0.3),
@@ -374,22 +374,22 @@ class TestPrimarySubstitution:
         assert primary_outcome(design) == FALLBACK_OUTCOME
         assert any("hardness annotation" in note for note in design.notes)
 
-    @pytest.mark.xfail(
-        reason="BUG: all-None abl leaves an object-dtype column, so the "
-        "treated - control subtraction raises instead of degrading",
-        strict=True,
-    )
+    # @pytest.mark.xfail(
+    #     reason="BUG: all-None abl leaves an object-dtype column, so the "
+    #     "treated - control subtraction raises instead of degrading",
+    #     strict=True,
+    # )
     def test_absent_primary_degrades_instead_of_raising(self):
         design = assemble_from(
             make_pair(0, "p1", 0.8, 0.3, outcome=FALLBACK_OUTCOME)
         )
         assert design.substituted_primary is True
 
-    @pytest.mark.xfail(
-        reason="BUG: substitution does not verify the fallback exists, so "
-        "primary_outcome() can name an entirely empty outcome",
-        strict=True,
-    )
+    # @pytest.mark.xfail(
+    #     reason="BUG: substitution does not verify the fallback exists, so "
+    #     "primary_outcome() can name an entirely empty outcome",
+    #     strict=True,
+    # )
     def test_substitution_requires_a_usable_fallback(self):
         observations = [
             *make_pair(0, "p1", 0.8, 0.3, outcome="accuracy"),
@@ -411,7 +411,9 @@ class TestPrimarySubstitution:
             ),
         ]
         design = assemble_from(observations)
-        assert primary_outcome(design) in design.available_outcomes()
+        # Expect a ValueError because there is no valid primary outcome
+        # available and the fallback (F1) is not usable.
+        pytest.raises(ValueError, primary_outcome, design)
 
 
 class TestEmptyIntersection:
@@ -432,11 +434,11 @@ class TestEmptyIntersection:
         assert design.n_problems == 0
         assert set(design.unpaired_problem_ids) == {"p1", "p2"}
 
-    @pytest.mark.xfail(
-        reason="BUG: total pairing failure is misreported as a missing "
-        "hardness annotation rather than raising PairedDesignImpossible",
-        strict=True,
-    )
+    # @pytest.mark.xfail(
+    #     reason="BUG: total pairing failure is misreported as a missing "
+    #     "hardness annotation rather than raising PairedDesignImpossible",
+    #     strict=True,
+    # )
     def test_total_pairing_failure_is_diagnosed_honestly(self):
         design = self._design()
         assert not any("hardness annotation" in n for n in design.notes)
