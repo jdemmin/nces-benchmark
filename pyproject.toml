@@ -16,5 +16,8 @@ packages = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers -m 'not integration'"
+markers = [
+    "integration: requires OWLAPY/HermiT and a JVM (deselect with '-m \"not integration\"')",
+]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
