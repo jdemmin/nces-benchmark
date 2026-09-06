@@ -3,6 +3,7 @@
 /[Oo]utput
 rm_out.sh
 Miniconda3-latest-Linux-x86_64.sh
+src/headroom/*
 
 # visual orientations
 /src/directory_layout.txt
