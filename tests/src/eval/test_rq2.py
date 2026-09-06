@@ -382,19 +382,52 @@ class TestMarginalRelationships:
         result = marginal_relationships(trials_to_frame(trials))
         assert result.empty, "documents current behaviour: group vanishes"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="A5: n=4 p-values use the asymptotic approximation and are "
-        "not interpretable; exact/permutation method required",
-    )
-    def test_small_sample_p_value_is_not_asymptotic(self):
-        frame = trials_to_frame(
-            make_record([0.1, 0.2, 0.3, 0.4], epochs_list=[25, 40, 55, 70])
+    # @pytest.mark.xfail(
+    #     strict=True,
+    #     reason="A5: n=4 p-values use the asymptotic approximation and are "
+    #     "not interpretable; exact/permutation method required",
+    # )
+    
+    def brute_force_exact_p(self, x, y):
+        import itertools
+
+        import numpy as np
+        from scipy import stats
+
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
+        observed_rho = stats.spearmanr(x, y).statistic
+        n = len(y)
+        count = 0
+        total = 0
+        for perm in itertools.permutations(y):
+            perm_rho = stats.spearmanr(x, np.asarray(perm)).statistic
+            if abs(perm_rho) >= abs(observed_rho) - 1e-12:
+                count += 1
+            total += 1
+        return count / total  # total == n! == 720 for n=6
+    
+    def test_small_sample_p_value_matches_exact_permutation_null(self):
+        import pytest
+        from scipy import stats
+
+        param_values = [1, 2, 3, 4, 5, 6]
+        scores = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]  # perfect monotonic
+        trials = trials_to_frame(
+            make_record(scores, epochs_list=param_values, batch_sizes=[32, 64, 128, 256, 512, 1024])
         )
-        row = marginal_relationships(frame)
-        p = row[row["parameter"] == "epochs"]["p_value"].iloc[0]
-        # exact two-sided minimum at n=4 is 2/4! * 2 = 0.0833...
-        assert p >= 0.08
+        assert trials["batch_size"].nunique() == 6
+        result = marginal_relationships(trials)
+        row = result.iloc[0]
+
+        expected_p = self.brute_force_exact_p(param_values, scores)
+        assert row["p_value"] == pytest.approx(expected_p, abs=1e-9)
+
+        # and sanity-check it actually differs from the asymptotic value —
+        # otherwise the test wouldn't be discriminating between the two methods
+
+        _, asymptotic_p = stats.spearmanr(param_values, scores)
+        assert abs(row["p_value"] - asymptotic_p) > 1e-3
 
     def test_p_value_is_present_when_rho_is(self):
         frame = trials_to_frame(make_record([0.1, 0.2, 0.3, 0.4, 0.5]))
@@ -722,10 +755,10 @@ class TestSelectSubstudyTarget:
         selection = select_substudy_target(frame, effects)
         assert selection.observed_mrr_spread == pytest.approx(0.0)
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B5: NaN sentinel is not valid JSON; None is used elsewhere",
-)
+# @pytest.mark.xfail(
+#     strict=True,
+#     reason="B5: NaN sentinel is not valid JSON; None is used elsewhere",
+# )
 def test_missing_effect_row_uses_none_not_nan():
     """The chosen (kb, condition) pair is absent from main_effects."""
     frame = trials_to_frame(

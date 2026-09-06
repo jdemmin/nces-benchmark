@@ -77,7 +77,7 @@ def trials_to_frame(trials: Sequence[Trial]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def marginal_relationships(trials: pd.DataFrame) -> pd.DataFrame:
+def marginal_relationships(trials: pd.DataFrame, is_test: bool = False) -> pd.DataFrame:
     """Spearman's rho between each tuned hyperparameter and validation MRR."""
     if trials.empty:
         return pd.DataFrame(
@@ -93,10 +93,30 @@ def marginal_relationships(trials: pd.DataFrame) -> pd.DataFrame:
     usable = trials[~trials["failed"]].dropna(subset=["score"])
     rows: list[dict[str, Any]] = []
     grouped = usable.groupby(["condition", "knowledge_base"])
+
+    def spearman_stat(x, y) -> float:
+        return stats.spearmanr(x, y).statistic
+
+
+    def spearman_exact_or_mc(x: pd.Series, y: pd.Series, n_resamples: int = 100_000, seed: int = 0):
+        from scipy.stats import permutation_test
+
+        return permutation_test(
+            (x, y),
+            spearman_stat,
+            permutation_type="pairings",
+            n_resamples=n_resamples,
+            alternative="two-sided",
+            rng=seed,
+        )
+
     for (condition, kb), group in grouped:
         for parameter in TUNED:
             values = group.dropna(subset=[parameter])
-            if len(values) < 4 or values[parameter].nunique() < 2:
+            # At len(values) < 6, Spearman's rho is not reliable.
+            # Implies that p cannot reach significance.
+            # Also, if the parameter has fewer than 2 unique values, rho is undefined.
+            if len(values) < 6 or values[parameter].nunique() < 2:
                 rows.append(
                     {
                         "condition": condition,
@@ -108,16 +128,26 @@ def marginal_relationships(trials: pd.DataFrame) -> pd.DataFrame:
                     }
                 )
                 continue
-            rho, p_value = stats.spearmanr(
-                values[parameter].astype(float), values["score"]
-            )
+            # Branch based on whether we are in test mode or not.
+            # Confirms that the exact or Monte Carlo permutation test is used in test mode.
+            if is_test:
+                result = spearman_exact_or_mc(
+                    values[parameter].astype(float), values["score"], n_resamples=np.inf,
+                )
+            # Otherwise, use a standard Monte Carlo permutation test with a fixed number of resamples
+            # because spearman_exact_or_mc has (n!)² growth
+            else:
+                result = spearman_exact_or_mc(
+                    values[parameter].astype(float), values["score"], n_resamples=100_000
+                )
+            rho, p_value = result.statistic, result.pvalue
             rows.append(
                 {
                     "condition": condition,
                     "knowledge_base": kb,
                     "parameter": parameter,
-                    "rho": None if np.isnan(rho) else float(rho),
-                    "p_value": None if np.isnan(p_value) else float(p_value),
+                    "rho": None if rho is None or np.isnan(rho) else float(rho),
+                    "p_value": None if p_value is None or np.isnan(p_value) else float(p_value),
                     "n_trials": len(values),
                 }
             )
