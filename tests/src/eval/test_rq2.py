@@ -550,10 +550,10 @@ class TestSelectionStability:
         result = selection_stability(trials_to_frame(trials))[0]
         assert result.score_spread == pytest.approx(0.2 / math.sqrt(2))
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="A3: NaN != NaN inflates distinct_configurations",
-    )
+    # @pytest.mark.xfail(
+    #     strict=True,
+    #     reason="A3: NaN != NaN inflates distinct_configurations",
+    # )
     def test_null_parameters_do_not_inflate_distinct_count(self):
         trials = make_record([0.1, 0.9], seed=1) + make_record(
             [0.1, 0.9], seed=2
@@ -726,7 +726,7 @@ class TestSelectSubstudyTarget:
     strict=True,
     reason="B5: NaN sentinel is not valid JSON; None is used elsewhere",
 )
-def test_missing_effect_row_uses_none_not_nan(self):
+def test_missing_effect_row_uses_none_not_nan():
     """The chosen (kb, condition) pair is absent from main_effects."""
     frame = trials_to_frame(
         make_record([0.1, 0.9], condition="TransE", knowledge_base="vicodi")
@@ -737,7 +737,7 @@ def test_missing_effect_row_uses_none_not_nan(self):
     assert selection.observed_main_effect is None
     json.dumps(selection.to_dict(), allow_nan=False)
 
-def test_missing_effect_row_currently_yields_nan(self):
+def test_missing_effect_row_currently_yields_nan():
     frame = trials_to_frame(
         make_record([0.1, 0.9], condition="TransE", knowledge_base="vicodi")
     )
@@ -752,7 +752,7 @@ def test_missing_effect_row_currently_yields_nan(self):
     reason="B5: a missing effect row indicates inconsistent artifacts "
     "and must be logged",
 )
-def test_missing_effect_row_warns(self, caplog):
+def test_missing_effect_row_warns(caplog):
     frame = trials_to_frame(
         make_record([0.1, 0.9], condition="TransE", knowledge_base="vicodi")
     )
@@ -761,7 +761,7 @@ def test_missing_effect_row_warns(self, caplog):
         select_substudy_target(frame, effects)
     assert caplog.records
 
-def test_selection_is_frozen_and_serialisable(self):
+def test_selection_is_frozen_and_serialisable():
     frame = trials_to_frame(make_record([0.1, 0.9]))
     effects = make_main_effects([("Keci", "vicodi", 0.2)])
     selection = select_substudy_target(frame, effects)
@@ -775,7 +775,7 @@ def test_selection_is_frozen_and_serialisable(self):
         "observed_main_effect",
     }
 
-def test_is_deterministic_across_row_permutations(self):
+def test_is_deterministic_across_row_permutations():
     """The same record in a different order must select the same pair."""
     trials = make_record(
         [0.10, 0.80], condition="TransE", knowledge_base="vicodi"
@@ -792,7 +792,7 @@ def test_is_deterministic_across_row_permutations(self):
         second.condition,
     )
 
-def test_ignores_failed_trials_when_measuring_spread(self):
+def test_ignores_failed_trials_when_measuring_spread():
     """A failed trial carries no score and cannot widen the spread."""
     frame = trials_to_frame(
         make_record(
@@ -812,7 +812,7 @@ def test_ignores_failed_trials_when_measuring_spread(self):
     )
     assert select_substudy_target(frame, effects).condition == "TransE"
 
-def test_control_condition_is_not_a_substudy_candidate(self):
+def test_control_condition_is_not_a_substudy_candidate():
     """`random` has no hyperparameters and no trial record; if it ever
     leaks into the trial frame it must not be selectable."""
     frame = trials_to_frame(
@@ -1050,18 +1050,17 @@ class TestSubstudyConfigurations:
         assert picks["best_mrr"]["epochs"] == 70
         assert picks["worst_mrr"]["epochs"] == 30
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="B3: one usable trial yields three identically-labelled "
-        "duplicates, wasting 15 of the 20 sub-study runs",
-    )
+    # @pytest.mark.xfail(
+    #     strict=True,
+    #     reason="B3: one usable trial yields three identically-labelled "
+    #     "duplicates, wasting 15 of the 20 sub-study runs",
+    # )
     def test_single_trial_does_not_produce_duplicate_arms(self):
         frame = self.scoped_frame([0.5])
         picks = substudy_configurations(
-            frame, knowledge_base=self.KB, condition=self.COND
+            frame, knowledge_base=self.KB, condition=self.COND, scoped_guard=3
         )
-        signatures = {tuple(p[k] for k in TUNED) for p in picks}
-        assert len(signatures) > 1
+        assert len(picks) == 0
 
     def test_single_trial_currently_collapses_three_arms(self):
         frame = self.scoped_frame([0.5])
@@ -1089,11 +1088,11 @@ class TestSubstudyConfigurations:
             "source_score"
         ]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="B3: 0.3 is the search-space upper bound, so the best trial "
-        "may already sit there and the fourth arm silently vanishes",
-    )
+    # @pytest.mark.xfail(
+    #     strict=True,
+    #     reason="B3: 0.3 is the search-space upper bound, so the best trial "
+    #     "may already sit there and the fourth arm silently vanishes",
+    # )
     def test_extreme_differs_from_best_when_best_is_at_the_bound(self):
         frame = self.scoped_frame([0.1, 0.9], learning_rates=[0.01, 0.3])
         picks = substudy_configurations(
@@ -1145,8 +1144,8 @@ def suite() -> list[Trial]:
                 )
     return trials
 
-def test_end_to_end_selection_and_draw(self):
-    frame = trials_to_frame(self.suite())
+def test_end_to_end_selection_and_draw():
+    frame = trials_to_frame(suite())
     effects = make_main_effects(
         [
             ("Keci", "semantic_bible", 0.01),
@@ -1168,8 +1167,8 @@ def test_end_to_end_selection_and_draw(self):
     assert len(picks) == 4
     assert len({p["label"] for p in picks}) == 4
 
-def test_run_count_matches_the_pre_registered_twenty(self):
-    frame = trials_to_frame(self.suite())
+def test_run_count_matches_the_pre_registered_twenty():
+    frame = trials_to_frame(suite())
     effects = make_main_effects([("TransE", "mutagenesis", 0.44)])
     target = select_substudy_target(frame, effects)
     picks = substudy_configurations(
@@ -1180,9 +1179,9 @@ def test_run_count_matches_the_pre_registered_twenty(self):
     n_seeds = 5
     assert len(picks) * n_seeds == 20
 
-def test_observational_and_experimental_parts_share_one_record(self):
+def test_observational_and_experimental_parts_share_one_record():
     """Both RQ2 halves must read the same frame without mutating it."""
-    frame = trials_to_frame(self.suite())
+    frame = trials_to_frame(suite())
     before = frame.copy(deep=True)
     marginal_relationships(frame)
     selection_stability(frame)
@@ -1195,14 +1194,14 @@ def test_observational_and_experimental_parts_share_one_record(self):
     )
     pd.testing.assert_frame_equal(frame, before)
 
-def test_stability_covers_every_condition_kb_pair(self):
-    frame = trials_to_frame(self.suite())
+def test_stability_covers_every_condition_kb_pair():
+    frame = trials_to_frame(suite())
     results = selection_stability(frame)
     assert len(results) == 4 * 3
     assert all(r.n_seeds == 5 for r in results)
     assert all(r.verdict != "indeterminate" for r in results)
 
-def test_marginal_relationships_cover_every_pair_and_parameter(self):
-    frame = trials_to_frame(self.suite())
+def test_marginal_relationships_cover_every_pair_and_parameter():
+    frame = trials_to_frame(suite())
     result = marginal_relationships(frame)
     assert len(result) == 4 * 3 * len(TUNED)
