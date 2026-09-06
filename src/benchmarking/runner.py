@@ -183,18 +183,17 @@ def run_benchmark(
             "failures": failures,
             "elapsed_time": round(time.perf_counter() - started, 3),
         }
-        out=output_dir or OUTPUT_DIR
         write_json(payload=summary, path=benchmark_dir / "benchmark_summary.json")
-        _clean_dir(path=benchmark_dir, make_zip=True)
-        _copy_from_temp_dir(from_path=benchmark_dir, to_path=out)
-        
-        
+
+        import shutil
+
+        logger.info("Proceeding to zip the directory %s", benchmark_dir)
+        shutil.make_archive(str(benchmark_dir), 'zip', str(benchmark_dir))
+        logger.info("Completed zipping the directory %s", benchmark_dir)
+        shutil.copytree(benchmark_dir, output_dir or OUTPUT_DIR, dirs_exist_ok=True)        
     return summary
 
-def _copy_from_temp_dir(from_path: Path, to_path: Path):
-    import shutil
-    shutil.copytree(from_path, to_path, dirs_exist_ok=True)
-
+    
 
 def run_substudy(
     config: BenchmarkConfiguration,
@@ -468,8 +467,8 @@ def run_single(
         payload=single_run_result,
         path=paths.nces_results_dir / "single_run_result.json",
     )
-    _remove_trials(path=paths.embeddings_dir)
-    _clean_dir(path=paths.seed_dir, make_zip=True)
+    # _remove_trials(path=paths.embeddings_dir)
+    # _clean_dir(path=paths.seed_dir, make_zip=True)
     return single_run_result 
 
 
