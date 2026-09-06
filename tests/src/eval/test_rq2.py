@@ -262,9 +262,9 @@ class TestMarginalRelationships:
     def test_empty_input(self):
         assert marginal_relationships(pd.DataFrame()).empty
 
-    @pytest.mark.xfail(
-        strict=True, reason="B2: empty result is not schema-stable"
-    )
+    # @pytest.mark.xfail(
+    #     strict=True, reason="B2: empty result is not schema-stable"
+    # )
     def test_empty_input_is_schema_stable(self):
         assert MARGINAL_COLUMNS.issubset(
             marginal_relationships(pd.DataFrame()).columns

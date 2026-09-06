@@ -80,7 +80,7 @@ def trials_to_frame(trials: Sequence[Trial]) -> pd.DataFrame:
 def marginal_relationships(trials: pd.DataFrame) -> pd.DataFrame:
     """Spearman's rho between each tuned hyperparameter and validation MRR."""
     if trials.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["condition", "knowledge_base", "parameter", "rho", "p_value", "n_trials"])
     usable = trials[~trials["failed"]].dropna(subset=["score"])
     rows: list[dict[str, Any]] = []
     grouped = usable.groupby(["condition", "knowledge_base"])
